@@ -12,6 +12,7 @@ The agent should skip any checklist item that involves:
 - Collecting coins
 - Submitting questions or forms
 - Clicking on answers for questions
+- Testing podcast QR code
 
 When a check is skipped, write "skipped" in the QA comments column.
 

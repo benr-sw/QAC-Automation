@@ -86,9 +86,13 @@ All secrets are stored in `.env` (never hardcoded).
 ## Commands
 ```bash
 # Install dependencies
-pip install -r requirements.txt
+/opt/homebrew/bin/python3.11 -m pip install -r requirements.txt
 
-# Run full workflow
-python main.py
+# Install Playwright browser
+/opt/homebrew/bin/python3.11 -m playwright install chromium
+
+# Run the app
+/opt/homebrew/bin/python3.11 -m streamlit run main.py
+```
 
 ---

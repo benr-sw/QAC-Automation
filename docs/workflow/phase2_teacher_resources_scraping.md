@@ -4,7 +4,7 @@
 After scraping the student view, the agent navigates to the Teacher Resources section and collects all relevant content. This data is used during the TR (online) QA check loop.
 
 ## Starting Point
-Agent has finished student view scraping and now clicks into Teacher Resources.
+Agent has finished student view scraping and now clicks into Teacher Resources. See `portal_reference.md` for navigation details.
 
 ## Loop — For Each Dropdown Article
 The agent repeats the following for every item in the teacher resources dropdown:

@@ -20,7 +20,7 @@ After navigating to the correct week the agent must:
 1. Click into the TOC week title
 2. Ensure that `Student View` near the top of the page is selected
 3. The current page/article title in student view will be displayed in the dropdown box
-4. Navigate to subsequent pages by clicking `Next` underneath the dropdown
+4. Navigate to subsequent pages through the pagination by clicking `Next` underneath the dropdown
 5. You will interact with all pages by clicking `Next` until you reach the crossword page. You interact with the crossword page or any pages past it. 
 6. Click `Previous` to go back and interact with previous pages
 
