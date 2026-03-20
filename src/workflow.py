@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 import anthropic
 
 from src.logger import setup_logger
-from src import sheets, pdf_parser, portal, qa_engine
+from src import sheets, portal, pdf_extractor, continuity, qa_engine
 
 
 def run_workflow(
@@ -26,7 +26,9 @@ def run_workflow(
 
         anthropic_key = os.getenv("ANTHROPIC_API_KEY")
         sw_password = os.getenv("SW_PORTAL_PASSWORD")
-        service_account_path = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "credentials/service_account.json")
+        service_account_path = os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_JSON", "credentials/service_account.json"
+        )
 
         if not anthropic_key:
             raise ValueError("ANTHROPIC_API_KEY not set in .env")
@@ -34,6 +36,12 @@ def run_workflow(
             raise ValueError("SW_PORTAL_PASSWORD not set in .env")
 
         claude_client = anthropic.Anthropic(api_key=anthropic_key)
+
+        # ---- Create timestamped run folder ----
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        run_dir = os.path.join("logs", "runs", f"run_{timestamp}")
+        os.makedirs(run_dir, exist_ok=True)
+        logger.info(f"Run output folder: {run_dir}")
 
         # ---- Google Sheet ----
         logger.info("Connecting to Google Sheet...")
@@ -48,22 +56,6 @@ def run_workflow(
             f"  State: {metadata['state']}, Grade: {metadata['grade']}, "
             f"Week: {metadata['week_number']} — {metadata['week_title']}"
         )
-
-        logger.info("Reading checklist rows...")
-        checklist_rows = sheets.read_checklist_rows(worksheet)
-        logger.info(f"  Found {len(checklist_rows)} check items.")
-
-        # ---- Parse PDFs ----
-        logger.info("Parsing uploaded PDFs...")
-        pdf_texts = {}
-        for label, file_obj in pdf_files.items():
-            if file_obj is not None:
-                parsed = pdf_parser.extract_text_from_pdf(file_obj, label)
-                pdf_texts[label] = parsed
-                logger.info(f"  {label} PDF: {parsed['page_count']} pages")
-            else:
-                pdf_texts[label] = {"label": label, "page_count": 0, "full_text": "", "pages": []}
-                logger.info(f"  {label} PDF: not provided")
 
         # ---- Portal: Login + Navigate ----
         logger.info("Launching browser...")
@@ -95,15 +87,18 @@ def run_workflow(
         logger.info("--- Phase 2: Scraping Student View ---")
         sv_articles = portal.scrape_student_view(page, logger)
 
-        # If the TOC accordion didn't expose article-level detail (some publications
-        # only show week titles), build the article list from the scraped SV articles
-        # (including toc_only stubs for crossword/misspilled/etc.).
         if not toc_data.get("articles"):
             toc_data["articles"] = [
-                {"type": a["title"].split(":")[0].strip(), "title": ":".join(a["title"].split(":")[1:]).strip(), "order": a["order"]}
+                {
+                    "type": a["title"].split(":")[0].strip(),
+                    "title": ":".join(a["title"].split(":")[1:]).strip(),
+                    "order": a["order"],
+                }
                 for a in sv_articles
             ]
-            logger.info(f"  TOC articles built from SV scrape: {len(toc_data['articles'])} articles")
+            logger.info(
+                f"  TOC articles built from SV scrape: {len(toc_data['articles'])} articles"
+            )
 
         logger.info(f"  Scraped {len(sv_articles)} SV articles:")
         for a in sv_articles:
@@ -122,42 +117,58 @@ def run_workflow(
             preview = ", ".join(section_names[:4]) if section_names else "(no sections)"
             logger.info(f"    [{a['order']}] {a['title']} — sections: {preview}")
 
-        # Write full scraped data to a debug JSON file for inspection
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        debug_path = f"logs/scraped_{timestamp}.json"
-        os.makedirs("logs", exist_ok=True)
-        with open(debug_path, "w") as f:
-            json.dump({
-                "toc_data": toc_data,
-                "sv_articles": sv_articles,
-                "tr_articles": tr_articles,
-            }, f, indent=2)
-        logger.info(f"  Full scraped data saved to {debug_path}")
+        # Save scraped JSON to run folder
+        scraped_json_path = os.path.join(run_dir, "scraped.json")
+        with open(scraped_json_path, "w") as f:
+            json.dump(
+                {"toc_data": toc_data, "sv_articles": sv_articles, "tr_articles": tr_articles},
+                f,
+                indent=2,
+            )
+        logger.info(f"  Scraped data saved → {scraped_json_path}")
 
-        # ---- Phase 4: QA Checks ----
-        logger.info("--- Phase 4: TOC Checks ---")
-        qa_engine.run_toc_checks(claude_client, toc_data, pdf_texts, checklist_rows, worksheet, logger)
+        # ---- Phase 4: Extract PDFs via Claude ----
+        logger.info("--- Phase 4: Extracting PDFs ---")
+        extracted_files = {}
+        for doc_type in ("SE", "TE", "Walkthrough", "Printables"):
+            output_path = os.path.join(run_dir, f"extracted_{doc_type.lower()}.md")
+            result = pdf_extractor.extract_pdf(
+                claude_client,
+                pdf_files.get(doc_type),
+                doc_type,
+                output_path,
+                logger,
+            )
+            extracted_files[doc_type] = result  # None if not provided
 
-        logger.info("--- Phase 4: SV Online Checks ---")
-        sv_articles_content = [a for a in sv_articles if not a.get("toc_only")]
-        qa_engine.run_sv_checks(claude_client, sv_articles_content, pdf_texts, checklist_rows, worksheet, logger)
+        # ---- Phase 5: Continuity Analysis ----
+        logger.info("--- Phase 5: Continuity Analysis ---")
+        continuity_path = os.path.join(run_dir, "continuity_analysis.md")
+        continuity.run_continuity_analysis(
+            claude_client,
+            scraped_json_path,
+            extracted_files,
+            continuity_path,
+            logger,
+        )
 
-        logger.info("--- Phase 4: TR Online Checks ---")
-        qa_engine.run_tr_checks(claude_client, tr_articles, pdf_texts, checklist_rows, worksheet, logger)
+        # ---- Phase 6: Map issues to sheet and write ----
+        logger.info("--- Phase 6: Writing issues to QAC sheet ---")
+        checklist_rows = sheets.read_checklist_rows(worksheet)
+        logger.info(f"  Read {len(checklist_rows)} checklist rows from sheet")
 
-        logger.info("--- Phase 4: SE PDF Checks ---")
-        qa_engine.run_se_pdf_checks(claude_client, pdf_texts, checklist_rows, worksheet, logger)
+        mappings = qa_engine.map_issues_to_sheet(
+            claude_client,
+            continuity_path,
+            checklist_rows,
+            logger,
+        )
 
-        logger.info("--- Phase 4: TE PDF Checks ---")
-        qa_engine.run_te_pdf_checks(claude_client, sv_articles_content, pdf_texts, checklist_rows, worksheet, logger)
-
-        logger.info("--- Phase 4: Other/Misc Checks ---")
-        all_data = {"toc_data": toc_data, "sv_articles": sv_articles_content, "tr_articles": tr_articles}
-        qa_engine.run_other_checks(claude_client, all_data, pdf_texts, checklist_rows, worksheet, logger)
+        sheets.write_issue_batch(worksheet, mappings, logger)
 
         # ---- Done ----
-        logger.info("QAC workflow complete!")
-        result_queue.put({"status": "done", "sheet_url": sheet_url})
+        logger.info(f"Pipeline complete. All outputs saved to: {run_dir}")
+        result_queue.put({"status": "done", "sheet_url": sheet_url, "run_dir": run_dir})
 
     except Exception as e:
         logger.error(f"Workflow failed: {e}")

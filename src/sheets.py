@@ -146,6 +146,31 @@ def get_cell_note(worksheet: gspread.Worksheet, row: int) -> str | None:
         return None
 
 
+def write_issue_batch(worksheet: gspread.Worksheet, mappings: list[dict], logger: logging.Logger):
+    """
+    Write a batch of mapped issues to the sheet.
+    Multiple issues targeting the same row are combined with a newline.
+    """
+    from collections import defaultdict
+
+    # Group comments by row_index, skip row -1
+    grouped = defaultdict(list)
+    for m in mappings:
+        row_idx = m.get("row_index", -1)
+        comment = m.get("comment", "").strip()
+        if row_idx != -1 and comment:
+            grouped[row_idx].append(comment)
+
+    logger.info(f"  Writing issues to {len(grouped)} sheet rows...")
+
+    for row_idx, comments in sorted(grouped.items()):
+        combined = "\n\n".join(comments)
+        write_qa_result(worksheet, row_idx, True, combined)
+        logger.info(f"    Row {row_idx}: {len(comments)} issue(s) written")
+
+    logger.info(f"  Sheet update complete.")
+
+
 def write_qa_result(worksheet: gspread.Worksheet, row: int, has_issue: bool, comment: str):
     if comment == "skipped":
         worksheet.update(f"C{row}", [["skipped"]])
