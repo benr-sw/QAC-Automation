@@ -15,7 +15,7 @@ def run_workflow(
     log_queue: queue.Queue,
     result_queue: queue.Queue,
 ):
-    load_dotenv()
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     logger = setup_logger(log_queue)
     playwright_instance = None
     browser = None
@@ -39,7 +39,8 @@ def run_workflow(
 
         # ---- Create timestamped run folder ----
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        run_dir = os.path.join("logs", "runs", f"run_{timestamp}")
+        project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        run_dir = os.path.join(project_root, "logs", "runs", f"run_{timestamp}")
         os.makedirs(run_dir, exist_ok=True)
         logger.info(f"Run output folder: {run_dir}")
 
@@ -84,6 +85,7 @@ def run_workflow(
         logger.info(f"--- Phase 2: Clicking into Week {metadata['week_number']} ---")
         portal.navigate_to_week(page, metadata["week_number"], logger)
 
+        sv_start_url = page.url
         logger.info("--- Phase 2: Scraping Student View ---")
         sv_articles = portal.scrape_student_view(page, logger)
 
@@ -110,7 +112,7 @@ def run_workflow(
 
         # ---- Phase 3: Scrape Teacher Resources ----
         logger.info("--- Phase 3: Scraping Teacher Resources ---")
-        tr_articles = portal.scrape_teacher_resources(page, logger)
+        tr_articles = portal.scrape_teacher_resources(page, logger, sv_start_url=sv_start_url)
         logger.info(f"  Scraped {len(tr_articles)} TR articles:")
         for a in tr_articles:
             section_names = [s["name"] for s in a.get("sections", [])]

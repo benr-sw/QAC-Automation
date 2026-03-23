@@ -1,10 +1,10 @@
+import os
 import re
 import logging
 from playwright.sync_api import sync_playwright, Page, Browser
 
 PORTAL_LOGIN_URL = "https://online.studiesweekly.com/login"
 PORTAL_BASE_URL = "https://online.studiesweekly.com"
-PORTAL_USERNAME = "claudecode"
 
 GRADE_NAMES = {
     0: "Kindergarten",
@@ -48,14 +48,15 @@ def login(page: Page, password: str, logger: logging.Logger):
     page.wait_for_load_state("networkidle")
     _wait(page, 1000)
 
-    page.fill("input[name='username']", PORTAL_USERNAME)
+    username = os.getenv("SW_PORTAL_USERNAME")
+    page.fill("input[name='username']", username)
     page.fill("input[name='password']", password)
     page.click("button[type='submit']")
-    page.wait_for_load_state("networkidle")
-    _wait(page, 2000)
-
-    if "/login" in page.url:
+    try:
+        page.wait_for_url(lambda url: "/login" not in url, timeout=60000)
+    except Exception:
         raise RuntimeError("Login failed — still on login page. Check credentials.")
+    page.wait_for_load_state("networkidle")
     logger.info("Logged in successfully.")
 
 
@@ -1010,18 +1011,26 @@ def _scrape_sv_article(page: Page, order: int, title: str, logger: logging.Logge
 
 # ---- Teacher Resources Scraping ----
 
-def scrape_teacher_resources(page: Page, logger: logging.Logger) -> list[dict]:
+def scrape_teacher_resources(page: Page, logger: logging.Logger, sv_start_url: str = None) -> list[dict]:
     """
     Clicks the TEACHER RESOURCES tab and iterates through articles.
     """
     logger.info("Navigating to Teacher Resources...")
 
-    tr_tab = page.locator("text=TEACHER RESOURCES").first
-    if tr_tab.is_visible(timeout=5000):
-        tr_tab.click()
+    # Navigate back to first article URL if provided — ensures we're on an article
+    # page where the TEACHER RESOURCES tab is visible (not an assignments page)
+    if sv_start_url:
+        logger.info(f"Restoring to article page: {sv_start_url}")
+        page.goto(sv_start_url)
+        page.wait_for_load_state("networkidle")
         _wait(page, 2000)
+
+    try:
+        page.locator("text=TEACHER RESOURCES").first.wait_for(state="visible", timeout=30000)
+        page.locator("text=TEACHER RESOURCES").first.click()
+        _wait(page, 3000)
         logger.info("Clicked TEACHER RESOURCES tab.")
-    else:
+    except Exception:
         logger.warning("TEACHER RESOURCES tab not found.")
         return []
 

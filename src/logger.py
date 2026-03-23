@@ -14,9 +14,11 @@ class QueueHandler(logging.Handler):
 
 
 def setup_logger(log_queue: queue.Queue) -> logging.Logger:
-    Path("logs").mkdir(exist_ok=True)
+    project_root = Path(__file__).parent.parent
+    logs_dir = project_root / "logs"
+    logs_dir.mkdir(exist_ok=True)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    log_path = Path(f"logs/qac_{timestamp}.log")
+    log_path = logs_dir / f"qac_{timestamp}.log"
 
     logger = logging.getLogger(f"qac_{timestamp}")
     logger.setLevel(logging.DEBUG)
