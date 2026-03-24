@@ -3,6 +3,7 @@ import io
 import logging
 
 from pypdf import PdfReader, PdfWriter
+from src.utils import claude_with_retry
 
 # ---------------------------------------------------------------------------
 # Extraction prompts — one per document type
@@ -84,8 +85,8 @@ def _to_base64(pdf_bytes: bytes) -> str:
     return base64.standard_b64encode(pdf_bytes).decode("utf-8")
 
 
-def _call_claude(client, pdf_bytes: bytes, prompt: str) -> str:
-    response = client.messages.create(
+def _call_claude(client, logger: logging.Logger, pdf_bytes: bytes, prompt: str) -> str:
+    response = claude_with_retry(client, logger,
         model="claude-opus-4-6",
         max_tokens=16000,
         temperature=0,
@@ -142,7 +143,7 @@ def _extract_walkthrough_chunk(
         )
 
     try:
-        return _call_claude(client, chunk_bytes, prompt)
+        return _call_claude(client, logger, chunk_bytes, prompt)
     except Exception as e:
         if end - start <= 1:
             logger.warning(
@@ -202,7 +203,7 @@ def extract_pdf(
         logger.info(f"  Walkthrough: {page_count} slides detected, using chunking fallback")
         content = _extract_walkthrough_chunk(client, pdf_bytes, 0, page_count, prompt, logger)
     else:
-        content = _call_claude(client, pdf_bytes, prompt)
+        content = _call_claude(client, logger, pdf_bytes, prompt)
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)

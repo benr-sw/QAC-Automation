@@ -14,6 +14,7 @@ def run_workflow(
     pdf_files: dict,
     log_queue: queue.Queue,
     result_queue: queue.Queue,
+    classroom_override: str = None,
 ):
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     logger = setup_logger(log_queue)
@@ -74,6 +75,7 @@ def run_workflow(
             metadata["state"],
             metadata["grade"],
             logger,
+            classroom_override=classroom_override,
         )
 
         # ---- Phase 1: Scrape TOC ----

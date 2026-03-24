@@ -3,6 +3,7 @@ import time
 import logging
 import re
 import anthropic
+from src.utils import claude_with_retry
 
 SKIP_KEYWORDS = [
     "audio", "podcast", "listen to", "watch video", "watch the video",
@@ -45,7 +46,8 @@ def run_qa_check(
     user_message = _build_user_message(check_instruction, check_note, relevant_content)
 
     try:
-        response = client.messages.create(
+        response = claude_with_retry(
+            client, logger,
             model="claude-sonnet-4-6",
             max_tokens=1024,
             system=SYSTEM_PROMPT,
@@ -246,32 +248,29 @@ def run_te_pdf_checks(client, sv_articles, pdf_texts, checklist_rows, worksheet,
     _run_checks_for_category("TE", client, content, checklist_rows, worksheet, logger)
 
 
-_MAPPING_PROMPT = """You are mapping QA issues from a continuity analysis to rows in a QAC Google Sheet.
+_MAPPING_PROMPT = """You are mapping QA issues to rows in a QAC Google Sheet.
 
 You will be given:
-1. A list of checklist rows from the sheet, each with a row number, category, and check instruction
-2. A continuity analysis containing identified issues
+1. A list of checklist rows, each with a row number and category
+2. A numbered list of issues, each tagged with the category it MUST map to
 
-Your task: For EVERY issue bullet point in the continuity analysis, find the single best-matching checklist row and assign it there.
+Your task: For each numbered issue, return the single best-matching row_index from the checklist.
 
-CRITICAL RULES:
-- You MUST return one entry for every single issue bullet in the continuity analysis — do not skip any, do not merge any together
-- Count the issues first, then make sure your output has the same number of entries
-- Each issue gets its own separate JSON entry, even if two issues map to the same row_index
-- Match each issue to the most specific checklist row that covers that type of problem
-- Do NOT place issues in rows that involve: listening to audio, watching video, the Misspilled game, crosswords, collecting coins, submitting questions, or clicking answers
-- Issues from the Walkthrough Slides section belong under SV Online rows in the sheet
-- Issues from the Printables section belong under TR Online rows in the sheet
-- If an issue has no reasonable match in any row, use row_index -1
-- For the comment text: keep the issue description concise and clear, remove the confidence tag
+RULES:
+- Return exactly one entry per issue — do not skip or merge any
+- Each issue is tagged [MUST MAP TO: <category>] — only choose rows whose category matches
+- Match to the most specific row that covers that type of problem
+- Do NOT match to rows involving: listening to audio, watching video, Misspilled, crosswords, coins, submitting answers
+- If no specific row in the required category fits, use the "Other issues" row in that category
+- If truly no match exists, use row_index -1
 
-Return ONLY a valid JSON array — no preamble, no counting text, no explanation. Each entry must be exactly:
-{"row_index": <integer>, "comment": "<issue description>"}
+Return ONLY a valid JSON array — no preamble, no explanation. Each entry must be exactly:
+{"issue_number": <integer>, "row_index": <integer>}
 
 Checklist rows:
 {rows_text}
 
-Continuity analysis:
+Issues:
 {issues_text}"""
 
 
@@ -322,6 +321,22 @@ def map_issues_to_sheet(
 
     # Pre-parse bullets so we know the exact count and category for each
     bullets = _extract_issue_bullets(issues_text)
+
+    # If this checklist has no video icon check in the SE section, drop SE video icon issues
+    se_rows_text = " ".join(
+        r["text"].lower() for r in checklist_rows
+        if r.get("has_checkbox") and r.get("category") == "SE"
+    )
+    if "video icon" not in se_rows_text and "video icons" not in se_rows_text:
+        before = len(bullets)
+        bullets = [
+            (cat, text) for (cat, text) in bullets
+            if not (cat == "SE" and "video icon" in text.lower())
+        ]
+        dropped = before - len(bullets)
+        if dropped:
+            logger.info(f"  Dropped {dropped} SE video icon issue(s) — no video icon check in this checklist")
+
     logger.info(f"  Parsed {len(bullets)} issue bullets from continuity analysis")
 
     # Number the issues and tag each with its required category
@@ -353,7 +368,8 @@ def map_issues_to_sheet(
 
     logger.info("  Mapping continuity issues to sheet rows via Claude...")
 
-    response = client.messages.create(
+    response = claude_with_retry(
+        client, logger,
         model="claude-sonnet-4-6",
         max_tokens=8192,
         temperature=0,
@@ -362,7 +378,7 @@ def map_issues_to_sheet(
 
     raw = response.content[0].text.strip()
 
-    # Extract JSON array from response — Claude may prepend counting/reasoning text
+    # Extract JSON array from response — Claude may prepend reasoning text
     json_match = re.search(r"\[.*\]", raw, re.DOTALL)
     if json_match:
         raw = json_match.group(0).strip()
@@ -373,23 +389,31 @@ def map_issues_to_sheet(
 
     try:
         mappings = json.loads(raw)
-        valid = [
-            m for m in mappings
-            if isinstance(m, dict) and "row_index" in m and "comment" in m
-        ]
-        invalid_count = len(mappings) - len(valid)
-        mapped = [m for m in valid if m["row_index"] != -1]
-        unmatched = [m for m in valid if m["row_index"] == -1]
+
+        # Build final results using bullet text directly — never Claude's paraphrase
+        _CONFIDENCE_RE = re.compile(r'\s*`?\[CONFIDENCE:[^\]]*\]`?', re.IGNORECASE)
+        results = []
+        for m in mappings:
+            if not isinstance(m, dict) or "issue_number" not in m or "row_index" not in m:
+                continue
+            idx = m["issue_number"] - 1  # 1-based → 0-based
+            if idx < 0 or idx >= len(bullets):
+                continue
+            _, bullet_text = bullets[idx]
+            comment = _CONFIDENCE_RE.sub("", bullet_text).strip()
+            results.append({"row_index": m["row_index"], "comment": comment})
+
+        mapped = [r for r in results if r["row_index"] != -1]
+        unmatched = [r for r in results if r["row_index"] == -1]
         logger.info(
             f"  Claude returned {len(mappings)} mappings: "
-            f"{len(mapped)} to rows, {len(unmatched)} unmatched (row -1), "
-            f"{invalid_count} invalid entries dropped"
+            f"{len(mapped)} to rows, {len(unmatched)} unmatched (row -1)"
         )
         if unmatched:
             logger.info("  Unmatched issues (no row found):")
-            for m in unmatched:
-                logger.info(f"    - {m['comment'][:120]}")
-        return valid
+            for r in unmatched:
+                logger.info(f"    - {r['comment'][:120]}")
+        return results
     except json.JSONDecodeError as e:
         logger.error(f"  Failed to parse mapping response as JSON: {e}")
         logger.error(f"  Raw response (first 500 chars): {raw[:500]}")

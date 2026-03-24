@@ -1,5 +1,6 @@
 import json
 import logging
+from src.utils import claude_with_retry
 
 _CONTINUITY_PROMPT = """You are performing a continuity analysis for a Studies Weekly educational publication. You have been provided with some or all of the following sources for the same week:
 
@@ -150,6 +151,7 @@ For every element listed below, verify it is consistent across all sources where
 - Do not include the line number (e.g. line 546) where an issue appears, as these won't be known to the human reviewer
 - Before writing any bullet point, ask yourself: "Is this actually an issue?" If the answer is no, or if your own note says "no issue," "matches," or "consistent," do not write it down at all. Every bullet in the output must describe a real problem.
 - TR Online is structured so that week-level content (Vocabulary, Essential Question, Supporting Questions, Learning Objectives, Student Outcomes, Assessment Map, Printables, Teacher Background Knowledge, etc.) repeats identically across every article entry. This is expected and is not an issue to flag.
+- Compelling Question or Essential Question Articles in the SV Online will typically not have a number by the Article/Activity. This is fine and does not need to be reported.
 
 ---
 
@@ -238,7 +240,8 @@ def run_continuity_analysis(
     logger.info("  Running continuity analysis via Claude (opus-4-6)...")
     logger.info("  (This may take several minutes for large publications)")
 
-    response = client.messages.create(
+    response = claude_with_retry(
+        client, logger,
         model="claude-opus-4-6",
         max_tokens=16000,
         temperature=0,

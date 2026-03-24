@@ -62,15 +62,13 @@ def login(page: Page, password: str, logger: logging.Logger):
 
 # ---- Navigation ----
 
-def navigate_to_publication_toc(page: Page, state: str, grade: int, logger: logging.Logger) -> str:
+def navigate_to_publication_toc(page: Page, state: str, grade: int, logger: logging.Logger, classroom_override: str = None) -> str:
     """
     From the classrooms page, navigates to the publication's Table of Contents page.
     Returns the TOC page URL.
     """
     _wait(page, 1000)
 
-    # Step 1: Find the classroom card whose title contains the state and whose
-    # grade range includes the target grade (e.g. "TN6-8" covers grades 6, 7, 8)
     classroom_cards = page.locator(".classroom-card").all()
     pub_path = None
     for card in classroom_cards:
@@ -79,10 +77,19 @@ def navigate_to_publication_toc(page: Page, state: str, grade: int, logger: logg
         except Exception:
             title = card.inner_text().split("\n")[0].strip().upper()
 
+        # If override provided, match by card name directly
+        if classroom_override:
+            if classroom_override.upper() in title:
+                view_all = card.locator("a.show-all-text")
+                pub_path = view_all.get_attribute("href")
+                logger.info(f"Found classroom card '{title}' via override. Publications path: {pub_path}")
+                break
+            continue
+
+        # Auto-detect: find card whose title contains the state and grade
         if not title.startswith(state.upper()):
             continue
 
-        # Parse grade range from title e.g. "TN6-8" → low=6, high=8
         range_match = re.search(r"(\d+)-(\d+)", title)
         if range_match:
             low, high = int(range_match.group(1)), int(range_match.group(2))
@@ -92,7 +99,6 @@ def navigate_to_publication_toc(page: Page, state: str, grade: int, logger: logg
                 logger.info(f"Found classroom card '{title}'. Publications path: {pub_path}")
                 break
         else:
-            # Single-grade title e.g. "TN6" or "TNK" (kindergarten = grade 0)
             kinder_match = grade == 0 and bool(re.search(r"K", title))
             single = re.search(r"(\d+)", title)
             if kinder_match or (single and int(single.group(1)) == grade):
@@ -102,6 +108,8 @@ def navigate_to_publication_toc(page: Page, state: str, grade: int, logger: logg
                 break
 
     if not pub_path:
+        if classroom_override:
+            raise RuntimeError(f"Could not find classroom card matching override '{classroom_override}'")
         raise RuntimeError(f"Could not find classroom card for state={state}, grade={grade}")
 
     # Step 2: Navigate to publications page
@@ -752,9 +760,14 @@ def _scrape_sv_article(page: Page, order: int, title: str, logger: logging.Logge
         if scraped["lines"]:
             result["text"] = "\n\n".join(scraped["lines"])[:8000]
         text_from_fallback = scraped["source"] == "fallback"
-        # When source_object was used as article text (short reading articles like KG),
-        # skip Strategy A so the same content doesn't also appear in questions.
-        skip_strategy_a = scraped["source"] in ("short_article", "reference")
+        # Skip Strategy A when:
+        # - source_object was already used as article text (short/reference articles)
+        # - OR text was found via primary strategy on a standard article
+        #   (source_object only contains headings/decorative content, not questions)
+        skip_strategy_a = (
+            scraped["source"] in ("short_article", "reference")
+            or (is_article and scraped["source"] == "primary")
+        )
     except Exception as e:
         logger.warning(f"Could not scrape article text: {e}")
         text_from_fallback = False
@@ -821,7 +834,7 @@ def _scrape_sv_article(page: Page, order: int, title: str, logger: logging.Logge
                         if p_text.lower() in _NOISE_LINES:
                             continue
                         # Skip paragraphs already captured in the article text
-                        if len(p_text) > 20 and p_text[:60].lower() in existing_text_lower:
+                        if p_text[:60].lower() in existing_text_lower:
                             continue
                         question_paras.append(p_text)
                     if question_paras:
