@@ -122,44 +122,47 @@ def _page_range_to_bytes(pdf_bytes: bytes, start: int, end: int) -> bytes:
     return buf.getvalue()
 
 
-def _extract_walkthrough_chunk(
+def _extract_pdf_chunk(
     client,
     pdf_bytes: bytes,
     start: int,
     end: int,
     base_prompt: str,
     logger: logging.Logger,
+    doc_type: str = "",
 ) -> str:
-    """Recursively extract walkthrough slides, halving the chunk on failure."""
+    """Recursively extract PDF pages, halving the chunk on 413 or other failures."""
     chunk_bytes = _page_range_to_bytes(pdf_bytes, start, end)
 
-    # Tell Claude the absolute slide numbers so output is numbered correctly
     prompt = base_prompt
-    if start > 0:
-        prompt = (
-            base_prompt
-            + f"\n\nNote: These slides are slides {start + 1} through {end} of the full deck. "
-            "Number them accordingly in your output."
-        )
+    if start > 0 or True:
+        if doc_type == "Walkthrough":
+            prompt = (
+                base_prompt
+                + f"\n\nNote: These slides are slides {start + 1} through {end} of the full deck. "
+                "Number them accordingly in your output."
+            )
+        else:
+            prompt = (
+                base_prompt
+                + f"\n\nNote: This is pages {start + 1} through {end} of the full document. "
+                "Extract only the content on these pages — do not re-state or repeat content from previous pages."
+            )
 
     try:
         return _call_claude(client, logger, chunk_bytes, prompt)
     except Exception as e:
         if end - start <= 1:
-            logger.warning(
-                f"  Walkthrough slide {start + 1} could not be extracted: {e}"
-            )
-            return (
-                f"\n## Slide {start + 1}\n"
-                "*[Extraction failed for this slide — content too dense to process]*\n"
-            )
+            label = f"Slide {start + 1}" if doc_type == "Walkthrough" else f"Page {start + 1}"
+            logger.warning(f"  {label} could not be extracted: {e}")
+            return f"\n*[Extraction failed for {label.lower()} — content too dense to process]*\n"
         mid = (start + end) // 2
         logger.info(
-            f"  Walkthrough slides {start + 1}–{end} failed, "
+            f"  {doc_type} pages {start + 1}–{end} too large, "
             f"retrying as {start + 1}–{mid} and {mid + 1}–{end}"
         )
-        left = _extract_walkthrough_chunk(client, pdf_bytes, start, mid, base_prompt, logger)
-        right = _extract_walkthrough_chunk(client, pdf_bytes, mid, end, base_prompt, logger)
+        left = _extract_pdf_chunk(client, pdf_bytes, start, mid, base_prompt, logger, doc_type)
+        right = _extract_pdf_chunk(client, pdf_bytes, mid, end, base_prompt, logger, doc_type)
         return left + "\n" + right
 
 
@@ -197,13 +200,21 @@ def extract_pdf(
 
     logger.info(f"  Extracting {doc_type} PDF via Claude (opus-4-6)...")
 
+    reader = PdfReader(io.BytesIO(pdf_bytes))
+    page_count = len(reader.pages)
+
     if doc_type == "Walkthrough":
-        reader = PdfReader(io.BytesIO(pdf_bytes))
-        page_count = len(reader.pages)
-        logger.info(f"  Walkthrough: {page_count} slides detected, using chunking fallback")
-        content = _extract_walkthrough_chunk(client, pdf_bytes, 0, page_count, prompt, logger)
+        logger.info(f"  Walkthrough: {page_count} slides detected, using chunking")
+        content = _extract_pdf_chunk(client, pdf_bytes, 0, page_count, prompt, logger, doc_type)
     else:
-        content = _call_claude(client, logger, pdf_bytes, prompt)
+        try:
+            content = _call_claude(client, logger, pdf_bytes, prompt)
+        except Exception as e:
+            if "413" in str(e) or "request_too_large" in str(e):
+                logger.warning(f"  {doc_type} PDF too large ({page_count} pages), splitting into chunks...")
+                content = _extract_pdf_chunk(client, pdf_bytes, 0, page_count, prompt, logger, doc_type)
+            else:
+                raise
 
     with open(output_path, "w", encoding="utf-8") as f:
         f.write(content)

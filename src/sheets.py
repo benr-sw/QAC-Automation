@@ -171,6 +171,70 @@ def write_issue_batch(worksheet: gspread.Worksheet, mappings: list[dict], logger
     logger.info(f"  Sheet update complete.")
 
 
+def write_incremental_issue_batch(worksheet: gspread.Worksheet, mappings: list[dict], logger: logging.Logger):
+    """
+    Append new issues to existing sheet cells. New text is written in red.
+    If a cell is empty, writes in red. If it has content, appends after two newlines in red.
+    """
+    from collections import defaultdict
+
+    grouped = defaultdict(list)
+    for m in mappings:
+        row_idx = m.get("row_index", -1)
+        comment = m.get("comment", "").strip()
+        if row_idx != -1 and comment:
+            grouped[row_idx].append(comment)
+
+    logger.info(f"  Appending new issues to {len(grouped)} sheet rows (red text)...")
+
+    for row_idx, comments in sorted(grouped.items()):
+        new_text = "\n\n".join(comments)
+        _append_red_text(worksheet, row_idx, new_text)
+        logger.info(f"    Row {row_idx}: {len(comments)} new issue(s) appended")
+
+    logger.info("  Incremental sheet update complete.")
+
+
+def _append_red_text(worksheet: gspread.Worksheet, row_idx: int, new_text: str):
+    """Append new_text in red to cell C{row_idx}, preserving any existing black text."""
+    existing = worksheet.acell(f"C{row_idx}").value or ""
+    time.sleep(0.3)
+
+    if existing:
+        full_text = existing + "\n\n" + new_text
+        start_of_red = len(existing) + 2  # skip the two newlines
+    else:
+        full_text = new_text
+        start_of_red = 0
+
+    red = {"red": 0.8, "green": 0.0, "blue": 0.0}
+    text_format_runs = []
+    if start_of_red > 0:
+        text_format_runs.append({"startIndex": 0, "format": {}})  # black
+    text_format_runs.append({"startIndex": start_of_red, "format": {"foregroundColor": red}})
+
+    sheet_id = worksheet.id
+    row_0 = row_idx - 1  # 0-based
+
+    worksheet.spreadsheet.batch_update({"requests": [{
+        "updateCells": {
+            "rows": [{"values": [{
+                "userEnteredValue": {"stringValue": full_text},
+                "textFormatRuns": text_format_runs,
+            }]}],
+            "fields": "userEnteredValue,textFormatRuns",
+            "range": {
+                "sheetId": sheet_id,
+                "startRowIndex": row_0,
+                "endRowIndex": row_0 + 1,
+                "startColumnIndex": 2,  # column C
+                "endColumnIndex": 3,
+            },
+        }
+    }]})
+    time.sleep(0.3)
+
+
 def write_qa_result(worksheet: gspread.Worksheet, row: int, has_issue: bool, comment: str):
     if comment == "skipped":
         worksheet.update(f"C{row}", [["skipped"]])

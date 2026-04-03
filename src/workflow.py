@@ -147,13 +147,14 @@ def run_workflow(
 
         # ---- Phase 5: Continuity Analysis ----
         logger.info("--- Phase 5: Continuity Analysis ---")
-        continuity_path = os.path.join(run_dir, "continuity_analysis.md")
+        continuity_path = os.path.join(run_dir, "continuity_analysis1.md")
         continuity.run_continuity_analysis(
             claude_client,
             scraped_json_path,
             extracted_files,
             continuity_path,
             logger,
+            temperature=0,
         )
 
         # ---- Phase 6: Map issues to sheet and write ----
@@ -161,11 +162,13 @@ def run_workflow(
         checklist_rows = sheets.read_checklist_rows(worksheet)
         logger.info(f"  Read {len(checklist_rows)} checklist rows from sheet")
 
+        final_qa_check_path = os.path.join(run_dir, "final_QA_check.md")
         mappings = qa_engine.map_issues_to_sheet(
             claude_client,
             continuity_path,
             checklist_rows,
             logger,
+            final_qa_check_path=final_qa_check_path,
         )
 
         sheets.write_issue_batch(worksheet, mappings, logger)
@@ -181,3 +184,108 @@ def run_workflow(
     finally:
         if browser and playwright_instance:
             portal.close_browser(playwright_instance, browser)
+
+
+def run_analyze_again(
+    sheet_url: str,
+    run_dir: str,
+    log_queue: queue.Queue,
+    result_queue: queue.Queue,
+):
+    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    logger = setup_logger(log_queue)
+
+    try:
+        anthropic_key = os.getenv("ANTHROPIC_API_KEY")
+        service_account_path = os.getenv(
+            "GOOGLE_SERVICE_ACCOUNT_JSON", "credentials/service_account.json"
+        )
+        claude_client = anthropic.Anthropic(api_key=anthropic_key)
+
+        # Connect to sheet
+        logger.info("Connecting to Google Sheet...")
+        sheet_id = sheets.extract_sheet_id(sheet_url)
+        gspread_client = sheets.get_gspread_client(service_account_path)
+        spreadsheet = sheets.open_sheet(gspread_client, sheet_id)
+        worksheet = sheets.get_checklist_worksheet(spreadsheet)
+
+        # Find next analysis number
+        existing = [
+            f for f in os.listdir(run_dir)
+            if f.startswith("continuity_analysis") and f.endswith(".md")
+        ]
+        next_num = len(existing) + 1
+
+        # Gather existing extracted files
+        scraped_json_path = os.path.join(run_dir, "scraped.json")
+        extracted_files = {}
+        for doc_type in ("SE", "TE", "Walkthrough", "Printables"):
+            path = os.path.join(run_dir, f"extracted_{doc_type.lower()}.md")
+            extracted_files[doc_type] = path if os.path.exists(path) else None
+
+        # Run new continuity analysis
+        new_analysis_path = os.path.join(run_dir, f"continuity_analysis{next_num}.md")
+        logger.info(f"--- Analyze Again: Running continuity analysis pass {next_num} ---")
+        continuity.run_continuity_analysis(
+            claude_client,
+            scraped_json_path,
+            extracted_files,
+            new_analysis_path,
+            logger,
+            temperature=0,
+        )
+
+        # Compare against final_QA_check.md to find only new issues
+        final_qa_check_path = os.path.join(run_dir, "final_QA_check.md")
+        incremental_path = os.path.join(run_dir, f"incremental_issues{next_num}.md")
+        logger.info("--- Analyze Again: Identifying new issues ---")
+        continuity.find_incremental_issues(
+            claude_client,
+            new_analysis_path,
+            final_qa_check_path,
+            incremental_path,
+            logger,
+        )
+
+        # Check if any new issues were found
+        with open(incremental_path, encoding="utf-8") as f:
+            incremental_text = f.read().strip()
+
+        if "no new issues" in incremental_text.lower():
+            logger.info("  No new issues found in this analysis pass.")
+            result_queue.put({
+                "status": "done",
+                "sheet_url": sheet_url,
+                "run_dir": run_dir,
+                "new_count": 0,
+            })
+            return
+
+        # Map and write new issues in red
+        checklist_rows = sheets.read_checklist_rows(worksheet)
+        logger.info(f"  Read {len(checklist_rows)} checklist rows from sheet")
+        new_mappings = qa_engine.map_incremental_issues(
+            claude_client,
+            incremental_path,
+            checklist_rows,
+            logger,
+        )
+
+        if new_mappings:
+            sheets.write_incremental_issue_batch(worksheet, new_mappings, logger)
+            qa_engine.append_to_final_qa_check(final_qa_check_path, incremental_text)
+            new_count = len([m for m in new_mappings if m["row_index"] != -1])
+        else:
+            new_count = 0
+
+        logger.info(f"  Analyze Again complete. {new_count} new issue(s) added to sheet.")
+        result_queue.put({
+            "status": "done",
+            "sheet_url": sheet_url,
+            "run_dir": run_dir,
+            "new_count": new_count,
+        })
+
+    except Exception as e:
+        logger.error(f"Analyze Again failed: {e}")
+        result_queue.put({"status": "error", "message": str(e)})

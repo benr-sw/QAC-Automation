@@ -12,8 +12,8 @@ def claude_with_retry(client, logger: logging.Logger, max_retries: int = 4, **kw
     for attempt in range(max_retries + 1):
         try:
             return client.messages.create(**kwargs)
-        except (anthropic.OverloadedError, anthropic.APIStatusError) as e:
-            if isinstance(e, anthropic.APIStatusError) and e.status_code != 529:
+        except anthropic.APIStatusError as e:
+            if e.status_code != 529:
                 raise
             if attempt == max_retries:
                 logger.error("Claude API still overloaded after max retries — giving up.")

@@ -53,6 +53,7 @@ Your primary focus — in order of importance — is:
    - Question text that differs even slightly between SE, SV, TE, TR, or Slides
    - Answer choice text that differs between TE and SV assessment
    - The same item referenced by different names or wordings across sources
+   - Consistency in section text and numbering between TE PDF and TR Online Resources (Lesson Plan, vocabulary, Teacher Background Knowledge, etc.)
 
 2. **Missing content** — something present in one source that is entirely absent from
    another where it should appear (missing video icons, missing questions, missing sections)
@@ -89,7 +90,7 @@ For every element listed below, verify it is consistent across all sources where
 
 **Week-level elements** — check across all available sources:
 - Week number and week title
-- Essential question
+- Essential question/Compelling Question
 - Supporting questions
 - Vocabulary terms and definitions
 
@@ -104,6 +105,7 @@ For every element listed below, verify it is consistent across all sources where
 - Supplemental material titles (printables, activities) as they appear on the
   actual document must match exactly how they are referenced in the TE, TR, and
   Walkthrough Slides. Flag every variation
+- The single exception to Title consistency is the word “Activity” may be substituted for Article in the online version (e.g. TE may read “Article 1:” while SV online reads “Activity 1:”). This is up to the department and does not need to be flagged.
 
 **Question text exact matching** — check across all sources:
 - Every discussion question, supporting question, and assessment question must be
@@ -191,6 +193,7 @@ def run_continuity_analysis(
     extracted_files: dict,
     output_path: str,
     logger: logging.Logger,
+    temperature: float = 0,
 ) -> str:
     """
     Run the continuity analysis across all available sources.
@@ -210,6 +213,12 @@ def run_continuity_analysis(
     # --- Scraped JSON ---
     with open(scraped_json_path, encoding="utf-8") as f:
         scraped_data = json.load(f)
+
+    # Strip the scraping-index `order` field from TOC articles so Claude doesn't
+    # confuse the sequential scraping position with the article label number.
+    toc_articles = scraped_data.get("toc_data", {}).get("articles", [])
+    for article in toc_articles:
+        article.pop("order", None)
 
     content_parts.append({
         "type": "text",
@@ -244,7 +253,7 @@ def run_continuity_analysis(
         client, logger,
         model="claude-opus-4-6",
         max_tokens=16000,
-        temperature=0,
+        temperature=temperature,
         messages=[{
             "role": "user",
             "content": content_parts,
@@ -257,4 +266,73 @@ def run_continuity_analysis(
         f.write(result)
 
     logger.info(f"  Continuity analysis saved → {output_path}")
+    return output_path
+
+
+_INCREMENTAL_PROMPT = """You are reviewing a new QA continuity analysis for a Studies Weekly educational publication.
+
+A previous QA analysis was already performed and its issues are listed below. Your job is to go through the NEW analysis issue by issue and identify only issues that are NOT already covered by the previously reported issues.
+
+PREVIOUSLY REPORTED ISSUES:
+{existing_issues}
+
+NEW CONTINUITY ANALYSIS:
+{new_analysis}
+
+ALGORITHM (follow exactly):
+1. Go through the new analysis issue by issue.
+2. For each issue, ask: "Is this issue already described in the previously reported issues?"
+3. Two issues are the same if they describe the same problem in the same location — even if worded differently.
+4. If it is new, include it in your output under the correct section header.
+5. If it is already covered, skip it.
+
+RULES:
+- Do NOT add issues you think of yourself — only include issues from the new analysis that aren't already reported.
+- Do NOT include any bullet that says there is no issue, or that something "matches" or is "consistent."
+- Before including any issue, ask: is this issue SOLELY about the word "Article" being used instead of "Activity" (or vice versa)? If yes, drop it.
+- Preserve section headers (## TOC Structure, ## SV Online, ## TR Online, ## SE PDF, ## TE PDF, ## Walkthrough Slides, ## Printables).
+- Only include section headers that have at least one new issue under them.
+- If no new issues are found, output exactly: No new issues identified.
+- Output ONLY the markdown — no preamble, no explanation."""
+
+
+def find_incremental_issues(
+    client,
+    new_analysis_path: str,
+    final_qa_check_path: str,
+    output_path: str,
+    logger: logging.Logger,
+) -> str:
+    """
+    Compare a new continuity analysis against the existing final_QA_check.md.
+    Write only the new (not-yet-reported) issues to output_path.
+    Returns output_path.
+    """
+    with open(new_analysis_path, encoding="utf-8") as f:
+        new_analysis = f.read()
+    with open(final_qa_check_path, encoding="utf-8") as f:
+        existing_issues = f.read()
+
+    prompt = (
+        _INCREMENTAL_PROMPT
+        .replace("{existing_issues}", existing_issues)
+        .replace("{new_analysis}", new_analysis)
+    )
+
+    logger.info("  Comparing new analysis against previously reported issues (sonnet-4-6)...")
+
+    response = claude_with_retry(
+        client, logger,
+        model="claude-sonnet-4-6",
+        max_tokens=8192,
+        temperature=0,
+        messages=[{"role": "user", "content": prompt}],
+    )
+
+    result = response.content[0].text.strip()
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write(result)
+
+    logger.info(f"  Incremental issues saved → {output_path}")
     return output_path

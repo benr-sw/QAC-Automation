@@ -311,6 +311,7 @@ def map_issues_to_sheet(
     continuity_analysis_path: str,
     checklist_rows: list[dict],
     logger: logging.Logger,
+    final_qa_check_path: str = None,
 ) -> list[dict]:
     """
     Use Claude to map each issue in the continuity analysis to the best-matching
@@ -331,7 +332,10 @@ def map_issues_to_sheet(
         before = len(bullets)
         bullets = [
             (cat, text) for (cat, text) in bullets
-            if not (cat == "SE" and "video icon" in text.lower())
+            if not (
+                "video icon" in text.lower() and
+                (cat == "SE" or "se pdf" in text.lower())
+            )
         ]
         dropped = before - len(bullets)
         if dropped:
@@ -413,11 +417,88 @@ def map_issues_to_sheet(
             logger.info("  Unmatched issues (no row found):")
             for r in unmatched:
                 logger.info(f"    - {r['comment'][:120]}")
+
+        # Write final_QA_check.md — the canonical record of all issues written to the sheet
+        if final_qa_check_path and mapped:
+            _write_final_qa_check(bullets, results, final_qa_check_path)
+            logger.info(f"  Final QA check written → {final_qa_check_path}")
+
         return results
     except json.JSONDecodeError as e:
         logger.error(f"  Failed to parse mapping response as JSON: {e}")
         logger.error(f"  Raw response (first 500 chars): {raw[:500]}")
         return []
+
+
+_CATEGORY_TO_SECTION = {
+    "TOC": "TOC Structure",
+    "SV":  "SV Online",
+    "TR":  "TR Online",
+    "SE":  "SE PDF",
+    "TE":  "TE PDF",
+    "Other": "Other",
+}
+
+
+def _write_final_qa_check(
+    bullets: list[tuple[str, str]],
+    results: list[dict],
+    output_path: str,
+):
+    """
+    Write final_QA_check.md — one bullet per successfully mapped issue,
+    organized under the same section headers as the continuity analysis.
+    """
+    # Build a set of mapped issue indices (0-based)
+    mapped_indices = {i for i, r in enumerate(results) if r["row_index"] != -1}
+
+    # Group by section (preserve original order)
+    from collections import OrderedDict
+    sections: dict[str, list[str]] = OrderedDict()
+    for i, (cat, text) in enumerate(bullets):
+        if i not in mapped_indices:
+            continue
+        section = _CATEGORY_TO_SECTION.get(cat, cat)
+        sections.setdefault(section, []).append(text)
+
+    lines = []
+    for section, issue_list in sections.items():
+        lines.append(f"## {section}")
+        for issue in issue_list:
+            lines.append(f"- {issue}")
+        lines.append("")
+
+    with open(output_path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines))
+
+
+def append_to_final_qa_check(output_path: str, new_issues_text: str):
+    """
+    Append newly identified issues (already in markdown format) to final_QA_check.md.
+    """
+    if "no new issues" in new_issues_text.lower():
+        return
+    with open(output_path, "a", encoding="utf-8") as f:
+        f.write("\n" + new_issues_text.strip() + "\n")
+
+
+def map_incremental_issues(
+    client: anthropic.Anthropic,
+    incremental_analysis_path: str,
+    checklist_rows: list[dict],
+    logger: logging.Logger,
+) -> list[dict]:
+    """
+    Map issues from an incremental analysis file to sheet rows.
+    Same logic as map_issues_to_sheet but without writing final_QA_check.
+    """
+    return map_issues_to_sheet(
+        client,
+        incremental_analysis_path,
+        checklist_rows,
+        logger,
+        final_qa_check_path=None,
+    )
 
 
 def run_other_checks(client, all_data, pdf_texts, checklist_rows, worksheet, logger):

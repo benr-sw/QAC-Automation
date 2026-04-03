@@ -320,42 +320,30 @@ def scrape_student_view(page: Page, logger: logging.Logger) -> list[dict]:
             order += 1
             continue
 
-        # Stop at skip articles — but collect their titles as TOC-only stubs first
+        # Skip articles (crossword, misspilled, word search) — collect as TOC stub
+        # but keep clicking Next in case scrapeable articles come after them.
         if any(kw in title_lower for kw in SKIP_ARTICLE_KEYWORDS):
-            logger.info(f"Reached stop article: {current_title}. Collecting remaining titles for TOC.")
-            # Walk remaining articles collecting titles only (no content scraping).
-            # Track last valid URL so we can restore position for TR scraping.
-            seen_stop = set()
+            if _start_week_id:
+                _s_match = _svre.search(r'/week/([^/]+)/', page.url)
+                if not _s_match or _s_match.group(1) != _start_week_id:
+                    logger.debug(f"TOC stub loop: week boundary hit, restoring to {_last_valid_url}")
+                    page.goto(_last_valid_url)
+                    _wait(page, 1500)
+                    break
             _last_valid_url = page.url
-            while True:
-                stop_title = _get_current_article_title(page)
-                if stop_title in seen_stop:
-                    break
-                seen_stop.add(stop_title)
-                # Only collect if still in the same week.
-                # Also stop if URL has no /week/ segment (e.g. unit assessment uses
-                # /assignments/ URL format — not a regular article page).
-                if _start_week_id:
-                    _s_match = _svre.search(r'/week/([^/]+)/', page.url)
-                    if not _s_match or _s_match.group(1) != _start_week_id:
-                        # Left the week's article URL space — restore to last valid position
-                        logger.debug(f"TOC stub loop: week boundary hit, restoring to {_last_valid_url}")
-                        page.goto(_last_valid_url)
-                        _wait(page, 1500)
-                        break
-                _last_valid_url = page.url
-                articles.append({
-                    "title": stop_title, "order": order,
-                    "text": "", "has_audio": False, "has_video": False,
-                    "images": [], "questions": [], "explore_more": [],
-                    "toc_only": True,
-                })
-                logger.info(f"  TOC stub: {stop_title}")
-                order += 1
-                if not _click_next(page):
-                    break
-                _wait(page, 1000)
-            break
+            articles.append({
+                "title": current_title, "order": order,
+                "text": "", "has_audio": False, "has_video": False,
+                "images": [], "questions": [], "explore_more": [],
+                "toc_only": True,
+            })
+            logger.info(f"  TOC stub: {current_title}")
+            seen_titles.add(current_title)
+            order += 1
+            if not _click_next(page):
+                break
+            _wait(page, 1000)
+            continue
 
         # Stop if URL's week ID changed (crossed into a different week)
         if _start_week_id:
@@ -1074,8 +1062,13 @@ def scrape_teacher_resources(page: Page, logger: logging.Logger, sv_start_url: s
         title_lower = current_title.lower()
 
         if any(kw in title_lower for kw in SKIP_ARTICLE_KEYWORDS):
-            logger.info(f"Reached stop article: {current_title}. Done with TR.")
-            break
+            logger.info(f"TR: skipping '{current_title}', continuing in case scrapeable articles follow.")
+            seen_titles.add(current_title)
+            order += 1
+            if not _click_next(page):
+                break
+            _wait(page, 1000)
+            continue
 
         # Stop if URL's week ID changed (crossed into a different week)
         if _tr_start_week_id:

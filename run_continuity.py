@@ -3,14 +3,17 @@ Standalone script to re-run the continuity analysis and/or sheet mapping
 against an existing run folder. Skips scraping and PDF extraction.
 
 Usage:
-    # Re-run continuity analysis only
-    /opt/homebrew/bin/python3.11 run_continuity.py logs/runs/run_20260319_145219
+    # Re-run full ensemble analysis (5 passes + consolidation)
+    /opt/homebrew/bin/python3.11 run_continuity.py logs/runs/run_XXXXXX
 
-    # Re-run continuity analysis AND write issues to the sheet
-    /opt/homebrew/bin/python3.11 run_continuity.py logs/runs/run_20260319_145219 --sheet <sheet_url>
+    # Re-run full ensemble AND write issues to the sheet
+    /opt/homebrew/bin/python3.11 run_continuity.py logs/runs/run_XXXXXX --sheet <sheet_url>
 
-    # Skip re-running analysis, just re-map existing continuity_analysis.md to the sheet
-    /opt/homebrew/bin/python3.11 run_continuity.py logs/runs/run_20260319_145219 --sheet <sheet_url> --map-only
+    # Re-merge existing 5 analyses into a new final_QA_analysis, then map to sheet
+    /opt/homebrew/bin/python3.11 run_continuity.py logs/runs/run_XXXXXX --sheet <sheet_url> --consolidate-only
+
+    # Skip everything, just re-map existing final_QA_analysis.md to the sheet
+    /opt/homebrew/bin/python3.11 run_continuity.py logs/runs/run_XXXXXX --sheet <sheet_url> --map-only
 """
 
 import sys
@@ -18,7 +21,7 @@ import os
 import logging
 from anthropic import Anthropic
 from dotenv import load_dotenv
-from src.continuity import run_continuity_analysis
+from src.continuity import run_ensemble_analysis, consolidate_analyses
 from src import sheets, qa_engine
 
 load_dotenv()
@@ -36,6 +39,7 @@ def main():
     args = sys.argv[2:]
     sheet_url = None
     map_only = "--map-only" in args
+    consolidate_only = "--consolidate-only" in args
 
     if "--sheet" in args:
         idx = args.index("--sheet")
@@ -47,12 +51,24 @@ def main():
         sys.exit(1)
 
     scraped_json = os.path.join(run_folder, "scraped.json")
-    continuity_path = os.path.join(run_folder, "continuity_analysis.md")
+    final_path = os.path.join(run_folder, "final_QA_analysis.md")
 
     client = Anthropic()
 
-    # --- Step 1: Continuity analysis (unless --map-only) ---
-    if not map_only:
+    # --- Step 1a: Consolidate-only (re-merge existing analyses, skip re-running) ---
+    if consolidate_only:
+        analysis_paths = []
+        for i in range(1, 6):
+            path = os.path.join(run_folder, f"continuity_analysis{i}.md")
+            if not os.path.exists(path):
+                print(f"Error: continuity_analysis{i}.md not found in {run_folder}")
+                sys.exit(1)
+            analysis_paths.append(path)
+        logger.info(f"Re-consolidating {len(analysis_paths)} existing analyses...")
+        final_path = consolidate_analyses(client, analysis_paths, final_path, logger)
+
+    # --- Step 1b: Full ensemble analysis (unless --map-only or --consolidate-only) ---
+    elif not map_only:
         if not os.path.exists(scraped_json):
             print(f"Error: scraped.json not found in {run_folder}")
             sys.exit(1)
@@ -74,13 +90,12 @@ def main():
         if missing:
             logger.info(f"Sources absent (will be skipped): {', '.join(missing)}")
 
-        run_continuity_analysis(client, scraped_json, extracted_files, continuity_path, logger)
-        logger.info(f"Continuity analysis saved → {continuity_path}")
+        final_path = run_ensemble_analysis(client, scraped_json, extracted_files, run_folder, logger)
 
     # --- Step 2: Map to sheet (if --sheet provided) ---
     if sheet_url:
-        if not os.path.exists(continuity_path):
-            print(f"Error: continuity_analysis.md not found in {run_folder}")
+        if not os.path.exists(final_path):
+            print(f"Error: final_QA_analysis.md not found in {run_folder}")
             sys.exit(1)
 
         service_account_path = os.getenv(
@@ -96,7 +111,7 @@ def main():
         logger.info(f"Read {len(checklist_rows)} checklist rows")
 
         mappings = qa_engine.map_issues_to_sheet(
-            client, continuity_path, checklist_rows, logger
+            client, final_path, checklist_rows, logger
         )
         sheets.write_issue_batch(worksheet, mappings, logger)
         logger.info("Sheet update complete.")

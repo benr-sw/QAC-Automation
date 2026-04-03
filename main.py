@@ -4,7 +4,7 @@ import time
 
 import streamlit as st
 
-from src.workflow import run_workflow
+from src.workflow import run_workflow, run_analyze_again
 
 st.set_page_config(page_title="QAC Automation", layout="wide")
 st.image("static/studiesweekly.webp", width=200)
@@ -23,6 +23,16 @@ if "workflow_result" not in st.session_state:
     st.session_state.workflow_result = None
 if "intro_chars_shown" not in st.session_state:
     st.session_state.intro_chars_shown = 0
+if "analyze_again_running" not in st.session_state:
+    st.session_state.analyze_again_running = False
+if "analyze_again_log_queue" not in st.session_state:
+    st.session_state.analyze_again_log_queue = queue.Queue()
+if "analyze_again_result_queue" not in st.session_state:
+    st.session_state.analyze_again_result_queue = queue.Queue()
+if "analyze_again_messages" not in st.session_state:
+    st.session_state.analyze_again_messages = []
+if "analyze_again_result" not in st.session_state:
+    st.session_state.analyze_again_result = None
 
 _INTRO_TEXT = (
     "Hey! I'll get started on this right away. "
@@ -105,6 +115,9 @@ with col1:
         st.session_state.status_messages = []
         st.session_state.workflow_result = None
         st.session_state.intro_chars_shown = 0
+        st.session_state.analyze_again_running = False
+        st.session_state.analyze_again_messages = []
+        st.session_state.analyze_again_result = None
         # Reset queues
         st.session_state.log_queue = queue.Queue()
         st.session_state.result_queue = queue.Queue()
@@ -155,6 +168,21 @@ with col2:
                 result = st.session_state.result_queue.get_nowait()
                 st.session_state.workflow_result = result
                 st.session_state.workflow_running = False
+            except queue.Empty:
+                pass
+
+    if st.session_state.analyze_again_running:
+        while not st.session_state.analyze_again_log_queue.empty():
+            try:
+                msg = st.session_state.analyze_again_log_queue.get_nowait()
+                st.session_state.analyze_again_messages.append(msg)
+            except queue.Empty:
+                break
+        if not st.session_state.analyze_again_result_queue.empty():
+            try:
+                result = st.session_state.analyze_again_result_queue.get_nowait()
+                st.session_state.analyze_again_result = result
+                st.session_state.analyze_again_running = False
             except queue.Empty:
                 pass
 
@@ -227,5 +255,68 @@ with col3:
         if result["status"] == "done":
             st.success("All done!")
             st.markdown(f"[Open QA Checklist ↗]({result['sheet_url']})")
+
+            # Analyze Again section
+            st.markdown("---")
+            if not st.session_state.analyze_again_running:
+                if st.button("🔍 Analyze Again", type="secondary", use_container_width=True):
+                    st.session_state.analyze_again_running = True
+                    st.session_state.analyze_again_messages = []
+                    st.session_state.analyze_again_result = None
+                    st.session_state.analyze_again_log_queue = queue.Queue()
+                    st.session_state.analyze_again_result_queue = queue.Queue()
+                    thread = threading.Thread(
+                        target=run_analyze_again,
+                        args=(
+                            result["sheet_url"],
+                            result["run_dir"],
+                            st.session_state.analyze_again_log_queue,
+                            st.session_state.analyze_again_result_queue,
+                        ),
+                        daemon=True,
+                    )
+                    thread.start()
+                    st.rerun()
+
+            if st.session_state.analyze_again_running:
+                st.info("Running another analysis pass...")
+                if st.session_state.analyze_again_messages:
+                    last = st.session_state.analyze_again_messages[-1]
+                    st.caption(last)
+
+            aa_result = st.session_state.analyze_again_result
+            if aa_result:
+                if aa_result["status"] == "done":
+                    new_count = aa_result.get("new_count", 0)
+                    if new_count:
+                        st.success(f"Done! {new_count} new issue(s) added in red.")
+                    else:
+                        st.success("Done! No new issues found.")
+                    if st.button("🔍 Analyze Again", key="analyze_again_2", type="secondary", use_container_width=True):
+                        st.session_state.analyze_again_running = True
+                        st.session_state.analyze_again_messages = []
+                        st.session_state.analyze_again_result = None
+                        st.session_state.analyze_again_log_queue = queue.Queue()
+                        st.session_state.analyze_again_result_queue = queue.Queue()
+                        thread = threading.Thread(
+                            target=run_analyze_again,
+                            args=(
+                                result["sheet_url"],
+                                result["run_dir"],
+                                st.session_state.analyze_again_log_queue,
+                                st.session_state.analyze_again_result_queue,
+                            ),
+                            daemon=True,
+                        )
+                        thread.start()
+                        st.rerun()
+                elif aa_result["status"] == "error":
+                    st.error(f"Analyze Again failed: {aa_result.get('message', 'Unknown error')}")
+
         elif result["status"] == "error":
             st.error(f"Workflow failed: {result.get('message', 'Unknown error')}")
+
+    # Poll while analyze again is running
+    if st.session_state.analyze_again_running:
+        time.sleep(0.3)
+        st.rerun()
