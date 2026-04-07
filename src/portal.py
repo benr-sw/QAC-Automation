@@ -141,6 +141,63 @@ def navigate_to_publication_toc(page: Page, state: str, grade: int, logger: logg
     return page.url
 
 
+def revert_publication_to_default(page: Page, logger: logging.Logger):
+    """
+    On the TOC page: clicks Manage Publication → Revert to Default → Continue → Save.
+    Resets any custom visibility/ordering back to Studies Weekly defaults.
+    """
+    logger.info("  Reverting publication to default settings...")
+
+    # Open Manage Publication dialog
+    page.locator("button.manage-publication").click()
+    _wait(page, 1500)
+
+    # Click Revert to Default
+    page.locator("[data-cy='revert-to-default']").click()
+    _wait(page, 1500)
+
+    # Confirm in SweetAlert2 ("Continue")
+    page.locator(".swal2-confirm").click()
+    _wait(page, 1500)
+
+    # Click Save in the Manage Publication dialog
+    page.locator(".v-dialog button.primary--text").first.click()
+    _wait(page, 2000)
+
+    logger.info("  Publication reverted to default and saved.")
+
+
+def clear_week_progress(page: Page, week_number: int, logger: logging.Logger):
+    """
+    On the TOC page: finds the week card for week_number, clicks its gear icon,
+    selects Clear My Progress, and confirms the SweetAlert2 prompt.
+    """
+    logger.info(f"  Clearing progress for Week {week_number}...")
+
+    # Locate the week card
+    week_el = page.locator(f"text='Week {week_number}'").first
+    week_card = week_el.locator("xpath=ancestor::*[contains(@class,'week-card')][1]").first
+    header = week_card.locator("header.week-toolbar").first
+
+    # Click the gear/Manage Week button
+    header.locator("button.manage-content-btn").first.click()
+    _wait(page, 1000)
+
+    # Click "Clear My Progress" in the dropdown
+    page.locator("text=Clear My Progress").first.click()
+    _wait(page, 1500)
+
+    # Confirm in SweetAlert2 ("Clear Progress")
+    page.locator(".swal2-confirm").click()
+    _wait(page, 1500)
+
+    # Dismiss the "Progress cleared!" success popup ("OK")
+    page.locator(".swal2-confirm").click()
+    _wait(page, 1000)
+
+    logger.info(f"  Week {week_number} progress cleared.")
+
+
 def navigate_to_week(page: Page, week_number: int, logger: logging.Logger):
     """
     From the publication TOC page, clicks into the correct week.

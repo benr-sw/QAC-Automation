@@ -173,8 +173,8 @@ def write_issue_batch(worksheet: gspread.Worksheet, mappings: list[dict], logger
 
 def write_incremental_issue_batch(worksheet: gspread.Worksheet, mappings: list[dict], logger: logging.Logger):
     """
-    Append new issues to existing sheet cells. New text is written in red.
-    If a cell is empty, writes in red. If it has content, appends after two newlines in red.
+    Append new issues to existing sheet cells. New text is written in blue.
+    If a cell is empty, writes in blue. If it has content, appends after two newlines in blue.
     """
     from collections import defaultdict
 
@@ -185,7 +185,7 @@ def write_incremental_issue_batch(worksheet: gspread.Worksheet, mappings: list[d
         if row_idx != -1 and comment:
             grouped[row_idx].append(comment)
 
-    logger.info(f"  Appending new issues to {len(grouped)} sheet rows (red text)...")
+    logger.info(f"  Appending new issues to {len(grouped)} sheet rows (blue text)...")
 
     for row_idx, comments in sorted(grouped.items()):
         new_text = "\n\n".join(comments)
@@ -196,22 +196,22 @@ def write_incremental_issue_batch(worksheet: gspread.Worksheet, mappings: list[d
 
 
 def _append_red_text(worksheet: gspread.Worksheet, row_idx: int, new_text: str):
-    """Append new_text in red to cell C{row_idx}, preserving any existing black text."""
+    """Append new_text in blue to cell C{row_idx}, preserving any existing black text."""
     existing = worksheet.acell(f"C{row_idx}").value or ""
     time.sleep(0.3)
 
     if existing:
         full_text = existing + "\n\n" + new_text
-        start_of_red = len(existing) + 2  # skip the two newlines
+        start_of_blue = len(existing) + 2  # skip the two newlines
     else:
         full_text = new_text
-        start_of_red = 0
+        start_of_blue = 0
 
-    red = {"red": 0.8, "green": 0.0, "blue": 0.0}
+    blue = {"red": 0.0, "green": 0.0, "blue": 0.8}
     text_format_runs = []
-    if start_of_red > 0:
+    if start_of_blue > 0:
         text_format_runs.append({"startIndex": 0, "format": {}})  # black
-    text_format_runs.append({"startIndex": start_of_red, "format": {"foregroundColor": red}})
+    text_format_runs.append({"startIndex": start_of_blue, "format": {"foregroundColor": blue}})
 
     sheet_id = worksheet.id
     row_0 = row_idx - 1  # 0-based

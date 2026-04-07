@@ -1,0 +1,526 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>QAC Automation</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f5f5;
+      color: #1a1a1a;
+      min-height: 100vh;
+    }
+
+    header {
+      background: #fff;
+      border-bottom: 1px solid #e0e0e0;
+      padding: 1rem 2rem;
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    header img { height: 40px; }
+    header h1 { font-size: 1.25rem; font-weight: 600; }
+
+    .layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 1.5rem;
+      padding: 1.5rem 2rem;
+      max-width: 1400px;
+      margin: 0 auto;
+    }
+
+    .panel {
+      background: #fff;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      padding: 1.25rem;
+      min-width: 0;
+    }
+    .panel h2 { font-size: 1rem; font-weight: 600; margin-bottom: 1rem; }
+
+    label { display: block; font-size: 0.85rem; font-weight: 600; margin: 0.85rem 0 0.3rem; }
+    label:first-of-type { margin-top: 0; }
+
+    input[type="text"], input[type="url"], textarea {
+      width: 100%;
+      padding: 0.45rem 0.65rem;
+      border: 1px solid #ccc;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      font-family: inherit;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    input[type="text"]:focus, input[type="url"]:focus, textarea:focus {
+      border-color: #4f8ef7;
+    }
+    textarea { resize: vertical; }
+
+    .caption {
+      font-size: 0.75rem;
+      color: #666;
+      margin-top: 0.2rem;
+      line-height: 1.5;
+    }
+
+    input[type="file"] {
+      width: 100%;
+      font-size: 0.82rem;
+      padding: 0.3rem 0;
+      color: #333;
+    }
+
+    .info-box {
+      background: #e8f0fe;
+      border: 1px solid #b3c8f5;
+      border-radius: 6px;
+      padding: 0.75rem 1rem;
+      font-size: 0.82rem;
+      line-height: 1.6;
+      margin-bottom: 1rem;
+    }
+
+    .btn {
+      display: block;
+      width: 100%;
+      padding: 0.6rem 1rem;
+      border: none;
+      border-radius: 6px;
+      font-size: 0.9rem;
+      font-weight: 600;
+      cursor: pointer;
+      transition: opacity 0.15s;
+      margin-top: 1rem;
+    }
+    .btn:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-primary { background: #4f8ef7; color: #fff; }
+    .btn-primary:hover:not(:disabled) { background: #3a7de0; }
+    .btn-secondary { background: #f0f0f0; color: #333; border: 1px solid #ccc; }
+    .btn-secondary:hover:not(:disabled) { background: #e0e0e0; }
+
+    hr { border: none; border-top: 1px solid #e0e0e0; margin: 1rem 0; }
+
+    /* Status panel */
+    .robot-intro {
+      display: flex;
+      gap: 0.75rem;
+      align-items: flex-start;
+      font-size: 1rem;
+      line-height: 1.7;
+      margin-bottom: 1rem;
+    }
+    .robot-emoji { font-size: 2rem; }
+
+    .manual-checks {
+      height: 260px;
+      overflow-y: auto;
+      padding: 0.75rem 1rem;
+      border: 1px solid #e0e0e0;
+      border-radius: 8px;
+      background: #fafafa;
+      font-size: 0.875rem;
+      line-height: 1.7;
+    }
+
+    .current-activity {
+      background: #e8f0fe;
+      border: 1px solid #b3c8f5;
+      border-radius: 6px;
+      padding: 0.6rem 0.9rem;
+      font-size: 0.875rem;
+      margin: 0.5rem 0;
+    }
+
+    .log-box {
+      height: 200px;
+      overflow-y: auto;
+      padding: 0.6rem 0.75rem;
+      border: 1px solid #e0e0e0;
+      border-radius: 6px;
+      background: #fafafa;
+      font-size: 0.78rem;
+      font-family: monospace;
+      line-height: 1.6;
+    }
+
+    /* Result panel */
+    .alert-success {
+      background: #d4edda;
+      border: 1px solid #a8d5b5;
+      border-radius: 6px;
+      padding: 0.65rem 1rem;
+      font-size: 0.9rem;
+      font-weight: 600;
+      color: #1a5c2a;
+      margin-bottom: 0.75rem;
+    }
+    .alert-error {
+      background: #fde8e8;
+      border: 1px solid #f5b8b8;
+      border-radius: 6px;
+      padding: 0.65rem 1rem;
+      font-size: 0.9rem;
+      color: #8b1a1a;
+      margin-bottom: 0.75rem;
+    }
+    .sheet-link {
+      display: inline-block;
+      font-size: 0.9rem;
+      color: #4f8ef7;
+      text-decoration: none;
+      margin-bottom: 0.5rem;
+    }
+    .sheet-link:hover { text-decoration: underline; }
+
+    .aa-caption { font-size: 0.8rem; color: #555; margin-top: 0.4rem; }
+
+    #status-section, #result-section { display: none; }
+  </style>
+</head>
+<body>
+
+<header>
+  <img src="/static/studiesweekly.webp" alt="Studies Weekly" />
+  <h1>Quality Assurance Check</h1>
+</header>
+
+<div class="layout">
+
+  <!-- Column 1: Inputs -->
+  <div class="panel">
+    <h2>Inputs</h2>
+    <div class="info-box">
+      <strong>How to use:</strong><br>
+      1. Share your QAC Google Sheet with editor access to:<br>
+      <code>qac-automation@tonal-history-489219-j7.iam.gserviceaccount.com</code><br><br>
+      2. Paste the Google Sheet URL below<br>
+      3. Upload any available PDFs: SE, TE, Printables, Walkthrough Slides<br>
+      4. Click <strong>Start Quality Assurance</strong>
+    </div>
+
+    <label>QAC Checklist (Google Sheet URL)</label>
+    <input type="url" id="sheet_url" placeholder="https://docs.google.com/spreadsheets/d/..." />
+
+    <label>Classroom Card Override <span style="font-weight:400">(optional)</span></label>
+    <p class="caption">Only needed if the classroom card is mislabeled. Leave blank to auto-detect.</p>
+    <input type="text" id="classroom_override" placeholder="e.g. NY5" />
+
+    <label>Student Edition PDF</label>
+    <input type="file" id="se_pdf" accept=".pdf" />
+
+    <label>Teacher Edition PDF</label>
+    <input type="file" id="te_pdf" accept=".pdf" />
+
+    <label>Printables PDF</label>
+    <input type="file" id="printables_pdf" accept=".pdf" />
+
+    <label>Walkthrough Slides PDF</label>
+    <p class="caption">
+      • Use Answer Key Slides from Teacher Resources if available<br>
+      • Download as Full Width<br>
+      • Compress before uploading: Preview → File → Export → Quartz Filter: Reduce File Size
+    </p>
+    <input type="file" id="walkthrough_pdf" accept=".pdf" />
+
+    <label>Anything extra for the AI to know? <span style="font-weight:400">(optional)</span></label>
+    <textarea id="reviewer_notes" rows="3" placeholder="e.g. Pay extra attention to question wording in Article 3."></textarea>
+
+    <button class="btn btn-primary" id="start_btn" onclick="startWorkflow()">Start Quality Assurance</button>
+  </div>
+
+  <!-- Column 2: Status -->
+  <div class="panel">
+    <h2>Status</h2>
+
+    <div id="intro-section" style="display:none">
+      <div class="robot-intro">
+        <span class="robot-emoji">🤖</span>
+        <div id="intro-text"></div>
+      </div>
+      <div class="manual-checks">
+        <strong>🗂️ Table of Contents - TOC (online)</strong><br>
+        &bull; Check PDF attachments/icons in the TOC<br><br>
+        <strong>📚 Student View - SV (online)</strong><br><br>
+        <strong>🔤 🖥🎞 Walkthrough - WT</strong><br>
+        &bull; Answer key slides are teacher-facing only<br>
+        &bull; Walkthrough slides function correctly online (videos, all slides present, etc.)<br><br>
+        <strong>🔤 Vocabulary</strong><br>
+        &bull; Vocabulary bolding/unbolding consistency across sources<br><br>
+        <strong>📖🔈 Article/activity text and audio</strong><br>
+        &bull; Article and question audio narration and text highlighting<br>
+        &bull; Activities are interactive and correct answers on submission page make sense<br>
+        &bull; Podcast functionality<br><br>
+        <strong>🖼🎬🎶 Explore More / Related Media - RM</strong><br>
+        &bull; Video and audio clips free of errors<br>
+        &bull; Videos have closed captions and CCs are free of errors<br>
+        &bull; Images have no questions and videos have 0–3 questions<br>
+        &bull; Media questions can be answered by media<br><br>
+        <strong>🧩 Crossword</strong><br>
+        &bull; Crossword has 3–10 terms and is functional<br><br>
+        <strong>🎮 Misspilled</strong><br>
+        &bull; Any issues related to Misspilled<br><br>
+        <strong>💰 Coins</strong><br>
+        &bull; Coins can be collected throughout<br><br>
+        <strong>⚠️ Other</strong><br>
+        &bull; Broken links, images, wrong content attached, etc.
+      </div>
+    </div>
+
+    <div id="status-section">
+      <hr>
+      <strong>What I'm currently working on:</strong>
+      <div class="current-activity" id="current-activity"></div>
+      <div class="log-box" id="log-box"></div>
+    </div>
+  </div>
+
+  <!-- Column 3: Result -->
+  <div class="panel">
+    <h2>Result</h2>
+    <div id="result-section">
+      <div class="alert-success">All done!</div>
+      <a class="sheet-link" id="sheet-link" href="#" target="_blank">Open QA Checklist ↗</a>
+
+      <hr>
+
+      <!-- Analyze Again -->
+      <div id="aa-input-section">
+        <label>Anything extra for the AI to know? <span style="font-weight:400">(optional)</span></label>
+        <textarea id="aa_notes" rows="3" placeholder="e.g. Focus on the assessment questions."></textarea>
+        <button class="btn btn-secondary" id="aa_btn" onclick="analyzeAgain()">🔍 Analyze Again</button>
+      </div>
+
+      <div id="aa-running" style="display:none">
+        <div class="current-activity">Running another analysis pass...</div>
+        <div class="aa-caption" id="aa-last-msg"></div>
+      </div>
+
+      <div id="aa-result" style="display:none"></div>
+    </div>
+    <div id="error-section" style="display:none">
+      <div class="alert-error" id="error-msg"></div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  const API = ''; // same origin; change to 'http://your-ec2-ip:5000' when pointing at EC2
+
+  let currentJobId = null;
+  let pollInterval = null;
+  let runDir = null;
+  let sheetUrl = null;
+  let aaJobId = null;
+  let aaPollInterval = null;
+
+  const INTRO_TEXT = "Hey! I'll get started on this right away. I'll begin by getting all the info I need from Studies Weekly Online. After that I'll analyze any provided PDFs and run a full QA analysis of everything. Any issues I find I'll write directly into your QAC spreadsheet.\n\nWhile I'm working, here are the QA checks I can't perform that you should handle (if applicable):";
+
+  function setInputsDisabled(disabled) {
+    ['sheet_url','classroom_override','se_pdf','te_pdf','printables_pdf','walkthrough_pdf','reviewer_notes'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.disabled = disabled;
+    });
+    document.getElementById('start_btn').disabled = disabled;
+  }
+
+  async function startWorkflow() {
+    const url = document.getElementById('sheet_url').value.trim();
+    if (!url) { alert('Please enter a Google Sheet URL.'); return; }
+
+    setInputsDisabled(true);
+    currentJobId = null;
+    runDir = null;
+    sheetUrl = url;
+
+    // Reset UI
+    document.getElementById('result-section').style.display = 'none';
+    document.getElementById('error-section').style.display = 'none';
+    document.getElementById('status-section').style.display = 'none';
+    document.getElementById('log-box').innerHTML = '';
+    document.getElementById('current-activity').textContent = '';
+
+    // Show intro with typewriter
+    document.getElementById('intro-section').style.display = 'block';
+    typewriterIntro(INTRO_TEXT, document.getElementById('intro-text'), 0);
+
+    const form = new FormData();
+    form.append('sheet_url', url);
+    form.append('classroom_override', document.getElementById('classroom_override').value.trim());
+    form.append('reviewer_notes', document.getElementById('reviewer_notes').value.trim());
+
+    const fileFields = { SE: 'se_pdf', TE: 'te_pdf', Printables: 'printables_pdf', Walkthrough: 'walkthrough_pdf' };
+    for (const [key, id] of Object.entries(fileFields)) {
+      const file = document.getElementById(id).files[0];
+      if (file) form.append(key, file);
+    }
+
+    try {
+      const res = await fetch(`${API}/start`, { method: 'POST', body: form });
+      const data = await res.json();
+      if (data.error) { showError(data.error); return; }
+      currentJobId = data.job_id;
+      document.getElementById('status-section').style.display = 'block';
+      pollInterval = setInterval(pollStatus, 1500);
+    } catch (e) {
+      showError('Could not reach the server. Is the Flask app running?');
+    }
+  }
+
+  async function pollStatus() {
+    if (!currentJobId) return;
+    try {
+      const res = await fetch(`${API}/status/${currentJobId}`);
+      const data = await res.json();
+      if (data.error) { clearInterval(pollInterval); showError(data.error); return; }
+
+      renderLogs(data.messages);
+
+      if (!data.running) {
+        clearInterval(pollInterval);
+        pollInterval = null;
+        if (data.result?.status === 'done') {
+          runDir = data.result.run_dir;
+          sheetUrl = data.result.sheet_url;
+          showResult(data.result);
+        } else {
+          showError(data.result?.message || 'Workflow failed.');
+        }
+      }
+    } catch (e) { /* server temporarily unreachable — keep polling */ }
+  }
+
+  function renderLogs(messages) {
+    if (!messages.length) return;
+    const last = messages[messages.length - 1];
+    document.getElementById('current-activity').textContent = last;
+    const box = document.getElementById('log-box');
+    box.innerHTML = messages.slice(-60).join('<br>');
+    box.scrollTop = box.scrollHeight;
+  }
+
+  function showResult(result) {
+    setInputsDisabled(false);
+    const sec = document.getElementById('result-section');
+    sec.style.display = 'block';
+    document.getElementById('sheet-link').href = result.sheet_url;
+    document.getElementById('aa-input-section').style.display = 'block';
+    document.getElementById('aa-running').style.display = 'none';
+    document.getElementById('aa-result').style.display = 'none';
+    document.getElementById('aa_btn').disabled = false;
+  }
+
+  function showError(msg) {
+    setInputsDisabled(false);
+    document.getElementById('error-section').style.display = 'block';
+    document.getElementById('error-msg').textContent = msg;
+  }
+
+  async function analyzeAgain() {
+    if (!sheetUrl || !runDir) return;
+    const notes = document.getElementById('aa_notes').value.trim();
+
+    document.getElementById('aa-input-section').style.display = 'none';
+    document.getElementById('aa-running').style.display = 'block';
+    document.getElementById('aa-result').style.display = 'none';
+
+    try {
+      const res = await fetch(`${API}/analyze-again`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet_url: sheetUrl, run_dir: runDir, reviewer_notes: notes }),
+      });
+      const data = await res.json();
+      if (data.error) { showAAError(data.error); return; }
+      aaJobId = data.job_id;
+      aaPollInterval = setInterval(pollAA, 1500);
+    } catch (e) {
+      showAAError('Could not reach the server.');
+    }
+  }
+
+  async function pollAA() {
+    if (!aaJobId) return;
+    try {
+      const res = await fetch(`${API}/status/${aaJobId}`);
+      const data = await res.json();
+
+      if (data.messages?.length) {
+        document.getElementById('aa-last-msg').textContent = data.messages[data.messages.length - 1];
+      }
+
+      if (!data.running) {
+        clearInterval(aaPollInterval);
+        aaPollInterval = null;
+        const result = data.result;
+        if (result?.status === 'done') {
+          const count = result.new_count || 0;
+          const msg = count ? `Done! ${count} new issue(s) added in blue.` : 'Done! No new issues found.';
+          document.getElementById('aa-running').style.display = 'none';
+          const aaResult = document.getElementById('aa-result');
+          aaResult.style.display = 'block';
+          aaResult.innerHTML = `<div class="alert-success">${msg}</div>`;
+
+          // Show another Analyze Again input
+          const newInput = document.createElement('div');
+          newInput.innerHTML = `
+            <hr>
+            <label>Anything extra for the AI to know? <span style="font-weight:400">(optional)</span></label>
+            <textarea id="aa_notes_2" rows="3" placeholder="e.g. Focus on the assessment questions." style="width:100%;padding:.45rem .65rem;border:1px solid #ccc;border-radius:6px;font-size:.875rem;font-family:inherit;resize:vertical;margin-bottom:.5rem"></textarea>
+            <button class="btn btn-secondary" onclick="analyzeAgainFromResult(this)">🔍 Analyze Again</button>
+          `;
+          aaResult.appendChild(newInput);
+        } else {
+          showAAError(result?.message || 'Analyze Again failed.');
+        }
+      }
+    } catch (e) { /* keep polling */ }
+  }
+
+  async function analyzeAgainFromResult(btn) {
+    if (!sheetUrl || !runDir) return;
+    const notes = document.getElementById('aa_notes_2')?.value.trim() || '';
+
+    btn.disabled = true;
+    btn.textContent = 'Running...';
+    document.getElementById('aa-last-msg').textContent = '';
+    document.getElementById('aa-running').style.display = 'block';
+
+    try {
+      const res = await fetch(`${API}/analyze-again`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ sheet_url: sheetUrl, run_dir: runDir, reviewer_notes: notes }),
+      });
+      const data = await res.json();
+      if (data.error) { showAAError(data.error); return; }
+      aaJobId = data.job_id;
+      aaPollInterval = setInterval(pollAA, 1500);
+    } catch (e) {
+      showAAError('Could not reach the server.');
+    }
+  }
+
+  function showAAError(msg) {
+    document.getElementById('aa-running').style.display = 'none';
+    document.getElementById('aa-result').style.display = 'block';
+    document.getElementById('aa-result').innerHTML = `<div class="alert-error">${msg}</div>`;
+    document.getElementById('aa-input-section').style.display = 'block';
+  }
+
+  function typewriterIntro(text, el, pos) {
+    const display = Math.min(pos, text.length);
+    el.innerHTML = text.slice(0, display).replace(/\n\n/g, '<br><br>') + (display < text.length ? '▌' : '');
+    if (display < text.length) {
+      setTimeout(() => typewriterIntro(text, el, display + 4), 30);
+    }
+  }
+</script>
+
+</body>
+</html>

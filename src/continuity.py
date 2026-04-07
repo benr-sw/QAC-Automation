@@ -45,8 +45,7 @@ If content exists in one source but is absent in another:
 
 Your primary focus — in order of importance — is:
 
-1. **Exact text consistency across sources** — the same title, question, name, or phrase
-   appearing differently in different sources. This includes:
+1. **Exact text consistency across sources** — the same title, question, name, or phrase appearing differently in different sources. This includes:
    - Singular vs. plural forms of any word used across sources
    - Preposition or word choice differences in titles and headings
    - Spelling variants of proper names — people, battles, places, events — across any two sources
@@ -81,6 +80,11 @@ For each source provided, flag:
 - Inconsistent formatting of dates, names, or titles within the document
 - Potentially sensitive or controversial content for an elementary school audience
 - Repeated words, missing words, or clearly broken sentences
+- **Redundancy within a source** — content that is repeated unnecessarily within the same source. This includes:
+  - The same fact, sentence, or idea stated more than once within the same article or section
+  - The same question or prompt appearing more than once within the same source
+  - Vocabulary terms or definitions duplicated within the same source
+  - Any other content that appears to be unintentionally repeated within a single document
 
 ---
 
@@ -194,6 +198,7 @@ def run_continuity_analysis(
     output_path: str,
     logger: logging.Logger,
     temperature: float = 0,
+    reviewer_notes: str = None,
 ) -> str:
     """
     Run the continuity analysis across all available sources.
@@ -238,6 +243,18 @@ def run_continuity_analysis(
         content_parts.append({
             "type": "text",
             "text": f"## {label}\n\n{content}",
+        })
+
+    # --- Reviewer notes (if provided) ---
+    if reviewer_notes and reviewer_notes.strip():
+        content_parts.append({
+            "type": "text",
+            "text": (
+                "## REVIEWER NOTES\n\n"
+                "The QA reviewer has provided the following additional context or instructions. "
+                "Take these into account during your analysis:\n\n"
+                + reviewer_notes.strip()
+            ),
         })
 
     # --- Continuity analysis prompt ---

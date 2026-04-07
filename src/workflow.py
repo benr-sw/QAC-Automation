@@ -15,6 +15,7 @@ def run_workflow(
     log_queue: queue.Queue,
     result_queue: queue.Queue,
     classroom_override: str = None,
+    reviewer_notes: str = None,
 ):
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     logger = setup_logger(log_queue)
@@ -77,6 +78,13 @@ def run_workflow(
             logger,
             classroom_override=classroom_override,
         )
+
+        # ---- Pre-scrape reset actions ----
+        logger.info("Reverting publication to default settings...")
+        portal.revert_publication_to_default(page, logger)
+
+        logger.info(f"Clearing Week {metadata['week_number']} progress...")
+        portal.clear_week_progress(page, metadata["week_number"], logger)
 
         # ---- Phase 1: Scrape TOC ----
         logger.info("--- Phase 1: Scraping TOC ---")
@@ -155,6 +163,7 @@ def run_workflow(
             continuity_path,
             logger,
             temperature=0,
+            reviewer_notes=reviewer_notes,
         )
 
         # ---- Phase 6: Map issues to sheet and write ----
@@ -191,6 +200,7 @@ def run_analyze_again(
     run_dir: str,
     log_queue: queue.Queue,
     result_queue: queue.Queue,
+    reviewer_notes: str = None,
 ):
     load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
     logger = setup_logger(log_queue)
@@ -233,6 +243,7 @@ def run_analyze_again(
             new_analysis_path,
             logger,
             temperature=0,
+            reviewer_notes=reviewer_notes,
         )
 
         # Compare against final_QA_check.md to find only new issues
