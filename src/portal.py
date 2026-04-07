@@ -20,7 +20,7 @@ SKIP_ARTICLE_KEYWORDS = [
 
 # ---- Browser lifecycle ----
 
-def launch_browser(headless: bool = False):  # headless=True for production
+def launch_browser(headless: bool = True):
     playwright = sync_playwright().start()
     browser = playwright.chromium.launch(headless=headless)
     context = browser.new_context()
