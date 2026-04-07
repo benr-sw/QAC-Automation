@@ -62,7 +62,7 @@ def run_workflow(
 
         # ---- Portal: Login + Navigate ----
         logger.info("Launching browser...")
-        playwright_instance, browser, context, page = portal.launch_browser(headless=False)
+        playwright_instance, browser, context, page = portal.launch_browser(headless=True)
 
         logger.info("Logging into SWO portal...")
         portal.login(page, sw_password, logger)
