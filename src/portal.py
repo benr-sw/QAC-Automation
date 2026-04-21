@@ -43,21 +43,35 @@ def _wait(page: Page, ms: int = 2000):
 # ---- Login ----
 
 def login(page: Page, password: str, logger: logging.Logger):
-    logger.info("Navigating to SWO login page...")
-    page.goto(PORTAL_LOGIN_URL)
-    page.wait_for_load_state("networkidle")
-    _wait(page, 1000)
-
     username = os.getenv("SW_PORTAL_USERNAME")
-    page.fill("input[name='username']", username)
-    page.fill("input[name='password']", password)
-    page.click("button[type='submit']")
-    try:
-        page.wait_for_url(lambda url: "/login" not in url, timeout=60000)
-    except Exception:
-        raise RuntimeError("Login failed — still on login page. Check credentials.")
-    page.wait_for_load_state("networkidle")
-    logger.info("Logged in successfully.")
+    for attempt in range(1, 4):
+        logger.info(f"Navigating to SWO login page (attempt {attempt})...")
+        page.goto(PORTAL_LOGIN_URL)
+        page.wait_for_load_state("networkidle")
+        try:
+            page.wait_for_selector("input[name='username']", timeout=10000)
+        except Exception:
+            logger.warning(f"  Login form not ready on attempt {attempt}, retrying...")
+            continue
+
+        user_input = page.locator("input[name='username']")
+        pass_input = page.locator("input[name='password']")
+        user_input.click()
+        user_input.press_sequentially(username, delay=50)
+        pass_input.click()
+        pass_input.press_sequentially(password, delay=50)
+        _wait(page, 500)
+        page.click("button[type='submit']")
+        try:
+            page.wait_for_url(lambda url: "/login" not in url, timeout=60000)
+            page.wait_for_load_state("networkidle")
+            logger.info("Logged in successfully.")
+            return
+        except Exception:
+            logger.warning(f"  Login attempt {attempt} failed, retrying...")
+            _wait(page, 2000)
+
+    raise RuntimeError("Login failed after 3 attempts — check credentials.")
 
 
 # ---- Navigation ----
@@ -817,6 +831,23 @@ def _scrape_sv_article(page: Page, order: int, title: str, logger: logging.Logge
         logger.warning(f"Could not scrape article text: {e}")
         text_from_fallback = False
         skip_strategy_a = False
+
+    # ---- Bolded vocabulary words (vocab articles only) ----
+    is_vocab_article = title_lower.startswith("article:") and "vocabulary" in title_lower
+    if is_vocab_article:
+        try:
+            bolded = page.evaluate("""() => {
+                const seen = new Set();
+                for (const el of document.querySelectorAll('.v-html.source_object strong, .v-html.source_object b')) {
+                    const t = el.innerText.trim();
+                    if (t) seen.add(t);
+                }
+                return [...seen];
+            }""")
+            if bolded:
+                result["bolded_words"] = bolded
+        except Exception as e:
+            logger.warning(f"Could not scrape bolded vocab words: {e}")
 
     # ---- Images ----
     # Inline article images use class 'skip-hl'; their captions live in a

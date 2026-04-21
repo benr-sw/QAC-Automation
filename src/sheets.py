@@ -66,8 +66,8 @@ def read_metadata(worksheet: gspread.Worksheet) -> dict:
     week_raw = strip_prefix(raw_a3)     # e.g. "Week 23"
     week_title = strip_prefix(raw_a4)   # e.g. "Growth and Conflict..."
 
-    # Accept formats: "NY-5", "NY5", "TN-06", "TN-K", "TN-00"
-    sg_match = re.match(r'^([A-Za-z]+)-?([A-Za-z0-9]*)$', state_grade.strip())
+    # Accept formats: "NY-5", "NY5", "TN-06", "TN-K", "TN-00", "FL-00-SS"
+    sg_match = re.match(r'^([A-Za-z]+)-?([A-Za-z0-9]*)(?:-[A-Za-z0-9]+)*$', state_grade.strip())
     if sg_match:
         state = sg_match.group(1).upper()
         grade_raw = sg_match.group(2).upper()
@@ -144,6 +144,27 @@ def get_cell_note(worksheet: gspread.Worksheet, row: int) -> str | None:
         return note if note else None
     except Exception:
         return None
+
+
+def load_notes_for_rows(worksheet: gspread.Worksheet, rows: list[dict], logger: logging.Logger) -> list[dict]:
+    if not rows:
+        return rows
+
+    notes_map = {}
+    for r in rows:
+        try:
+            note = get_cell_note(worksheet, r["row_index"])
+            if note:
+                notes_map[r["row_index"]] = note
+        except Exception as e:
+            logger.warning(f"  Could not load note for row {r['row_index']}: {e}")
+        time.sleep(0.05)
+
+    for r in rows:
+        r["note"] = notes_map.get(r["row_index"])
+
+    logger.info(f"  Loaded notes for {len(notes_map)} checklist rows")
+    return rows
 
 
 def write_issue_batch(worksheet: gspread.Worksheet, mappings: list[dict], logger: logging.Logger):

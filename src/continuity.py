@@ -2,7 +2,33 @@ import json
 import logging
 from src.utils import claude_with_retry
 
-_CONTINUITY_PROMPT = """You are performing a continuity analysis for a Studies Weekly educational publication. You have been provided with some or all of the following sources for the same week:
+_PROMPT_GENERATOR_SYSTEM = """You are a QA analysis framework designer for Studies Weekly, an elementary school publications company.
+
+You will be given a QA checklist for a specific publication (state, grade, and week). Your job is to generate the CROSS-REFERENCE CHECKS section of a continuity analysis prompt that will be used by an AI reviewer to check this publication.
+
+Rules for what you generate:
+- Focus on cross-source consistency — the same content appearing correctly across all available sources
+- Be specific and actionable — each check should tell the reviewer exactly what to compare and what to look for
+- Do NOT include checks for: crossword, misspilled, word search, or any game-like activities
+- Do NOT include checks that are purely human judgment (e.g. whether content is age-appropriate)
+- DO include checks for: text consistency, question wording, titles, vocabulary, images, assessments, and any publication-specific nuances from the notes
+- Organize checks under clear subheadings
+- Write in the same imperative style as the existing prompt ("Check that...", "Flag any...", "Verify...")
+- Output ONLY the cross-reference checks content — no preamble, no explanation
+
+CRITICAL — how to read checklist items:
+Each checklist item describes the DESIRED STATE — what should be true in a correct publication.
+If a checklist item says "X is used everywhere", that means X is the CORRECT term and should appear; your check should verify X is present and flag any deviation from it.
+Cell notes provide additional context or nuances — read them carefully to understand which terms or behaviors are acceptable vs. unacceptable for this specific publication.
+Never invert the meaning of a checklist item. If it says term A should be used, do not generate a check that says term A should NOT be used."""
+
+_PROMPT_GENERATOR_USER = """Here is the QA checklist for this publication. Generate the CROSS-REFERENCE CHECKS section based on these items and their notes:
+
+{checklist_text}
+
+Remember: output only the cross-reference checks content, organized under clear subheadings."""
+
+_CONTINUITY_PROMPT_TOP = """You are performing a continuity analysis for a Studies Weekly educational publication. You have been provided with some or all of the following sources for the same week:
 
 - **Scraped JSON** — contains toc_data (TOC structure), sv_articles (student view online), tr_articles (teacher resources online)
 - **SE PDF** — student edition workbook (may or may not be provided)
@@ -21,6 +47,8 @@ Your job is to identify and report ONLY problems, inconsistencies, missing conte
 Each issue must follow this format:
 
 **[Primary Location]:** "exact quote or description" — [description of issue] → **[Secondary Location]:** "exact quote or description" `[CONFIDENCE: High/Medium/Low]`
+
+Keep each issue to one concise line. Do not write multi-sentence explanations or paragraphs. The description of the issue should be a short phrase — enough for a reviewer to understand what to fix, nothing more.
 
 Confidence levels:
 - **High** — clear, verifiable mismatch or error with direct evidence from the text
@@ -90,61 +118,7 @@ For each source provided, flag:
 
 ### CROSS-REFERENCE CHECKS
 
-For every element listed below, verify it is consistent across all sources where it should appear. Flag any mismatch, absence, or unexpected difference — including cases where content exists in one source but not another, or where content appears under an incorrect or mismatched heading or section.
-
-**Week-level elements** — check across all available sources:
-- Week number and week title
-- Essential question/Compelling Question
-- Supporting questions
-- Vocabulary terms and definitions
-
-**Title and name consistency** — check across ALL sources:
-- The week title must be worded identically across all sources. Flag any variation
-  including preposition differences, capitalization, or word order
-- Supporting questions must be worded identically across all sources. Check for
-  singular vs. plural, added prefixes or qualifiers, and any word substitutions
-- Proper names — people, events, locations — must be spelled consistently across
-  all sources. Check for single vs. double letters, missing particles, and
-  singular vs. plural
-- Supplemental material titles (printables, activities) as they appear on the
-  actual document must match exactly how they are referenced in the TE, TR, and
-  Walkthrough Slides. Flag every variation
-- The single exception to Title consistency is the word “Activity” may be substituted for Article in the online version (e.g. TE may read “Article 1:” while SV online reads “Activity 1:”). This is up to the department and does not need to be flagged.
-
-**Question text exact matching** — check across all sources:
-- Every discussion question, supporting question, and assessment question must be
-  checked word-for-word between each source where it appears
-- Flag singular/plural differences, added or removed words, and punctuation differences
-- Assessment answer choices must be checked word-for-word between TE and SV Online
-
-**Article-level elements** — for each article, check across all available sources:
-- Article title (exact match)
-- Article order and presence
-- Article body text (meaningful wording differences, missing or added content)
-- Questions, activities, and discussion prompts
-- **Images and captions** — for each article, compare images between SV Online and SE PDF:
-  - Every image in the SE PDF should have a corresponding image in SV Online. Flag any SE image with no apparent match online
-  - Image descriptions between sources may differ in wording (alt text vs. written description) — this is acceptable as long as both are clearly describing the same subject. Flag cases where the subject or content of the image appears to differ
-  - Captions in the SE PDF should match captions in SV Online exactly or near-exactly. Flag any caption that is meaningfully different, missing in one source, or present in one source but absent in the other
-
-**Explore More content** — for each article in SV Online that contains explore_more items:
-- All explore_more items (videos, images, audio, maps, etc.) should be listed or referenced in the TE PDF
-- Flag any explore_more item that has no corresponding reference in the TE
-- If an explore_more item is a video, a video icon should also be present in that article's section in the SE PDF. If the SE extraction notes "no video icons detected" or the section contains no video icon reference, flag this as a missing video icon in the SE
-
-**Assessment** — check across all available sources:
-- Assessment question text
-- Answer choices
-- Correct answers
-
-**Teacher/student-facing content** — check across TR Online and TE PDF:
-- All named sections (e.g. learning objectives, student outcomes, lesson plans, notes, background knowledge) should appear in both sources under consistent headings with consistent content
-- Flag any section that appears in one but not the other, or where the content under a heading in one source does not match what is under the equivalent heading in the other source
-
-**Supplemental materials** — if Walkthrough Slides and/or Printables are provided:
-- Titles, activity names, and vocabulary on these materials should match the SE PDF and SV Online
-- Discussion questions and primary source excerpts on slides should match the SE PDF exactly
-- Printable activity names should match how those activities are referenced in the SE, TE, and SV Online
+{cross_reference_checks}
 
 ---
 
@@ -181,6 +155,62 @@ After you've listed all issues, do NOT include any summary of issues.
 
 Output the full analysis as a markdown file."""
 
+_CROSS_REF_DEFAULT = """For every element listed below, verify it is consistent across all sources where it should appear. Flag any mismatch, absence, or unexpected difference — including cases where content exists in one source but not another, or where content appears under an incorrect or mismatched heading or section.
+
+**Week-level elements** — check across all available sources:
+- Week number and week title
+- Essential question/Compelling Question
+- Supporting questions
+- Vocabulary terms and definitions
+
+**Title and name consistency** — check across ALL sources:
+- The week title must be worded identically across all sources. Flag any variation
+  including preposition differences, capitalization, or word order
+- Supporting questions must be worded identically across all sources. Check for
+  singular vs. plural, added prefixes or qualifiers, and any word substitutions
+- Proper names — people, events, locations — must be spelled consistently across
+  all sources. Check for single vs. double letters, missing particles, and
+  singular vs. plural
+- Supplemental material titles (printables, activities) as they appear on the
+  actual document must match exactly how they are referenced in the TE, TR, and
+  Walkthrough Slides. Flag every variation
+- The single exception to Title consistency is the word "Activity" may be substituted for Article in the online version (e.g. TE may read "Article 1:" while SV online reads "Activity 1:"). This is up to the department and does not need to be flagged.
+
+**Question text exact matching** — check across all sources:
+- Every discussion question, supporting question, and assessment question must be
+  checked word-for-word between each source where it appears
+- Flag singular/plural differences, added or removed words, and punctuation differences
+- Assessment answer choices must be checked word-for-word between TE and SV Online
+
+**Article-level elements** — for each article, check across all available sources:
+- Article title (exact match)
+- Article order and presence
+- Article body text (meaningful wording differences, missing or added content)
+- Questions, activities, and discussion prompts
+- **Images and captions** — for each article, compare images between SV Online and SE PDF:
+  - Every image in the SE PDF should have a corresponding image in SV Online. Flag any SE image with no apparent match online
+  - Image descriptions between sources may differ in wording (alt text vs. written description) — this is acceptable as long as both are clearly describing the same subject. Flag cases where the subject or content of the image appears to differ
+  - Captions in the SE PDF should match captions in SV Online exactly or near-exactly. Flag any caption that is meaningfully different, missing in one source, or present in one source but absent in the other
+
+**Explore More content** — for each article in SV Online that contains explore_more items:
+- All explore_more items (videos, images, audio, maps, etc.) should be listed or referenced in the TE PDF
+- Flag any explore_more item that has no corresponding reference in the TE
+- If an explore_more item is a video, a video icon should also be present in that article's section in the SE PDF. If the SE extraction notes "no video icons detected" or the section contains no video icon reference, flag this as a missing video icon in the SE
+
+**Assessment** — check across all available sources:
+- Assessment question text
+- Answer choices
+- Correct answers
+
+**Teacher/student-facing content** — check across TR Online and TE PDF:
+- All named sections (e.g. learning objectives, student outcomes, lesson plans, notes, background knowledge) should appear in both sources under consistent headings with consistent content
+- Flag any section that appears in one but not the other, or where the content under a heading in one source does not match what is under the equivalent heading in the other source
+
+**Supplemental materials** — if Walkthrough Slides and/or Printables are provided:
+- Titles, activity names, and vocabulary on these materials should match the SE PDF and SV Online
+- Discussion questions and primary source excerpts on slides should match the SE PDF exactly
+- Printable activity names should match how those activities are referenced in the SE, TE, and SV Online"""
+
 
 # Labels used when assembling the message — maps pdf_files key → display name
 _LABELS = {
@@ -191,6 +221,50 @@ _LABELS = {
 }
 
 
+def generate_analysis_prompt(
+    client,
+    checklist_rows: list,
+    logger: logging.Logger,
+) -> str:
+    """
+    Use Sonnet to generate a tailored cross-reference checks section from the
+    QAC checklist rows (with notes). Falls back to _CROSS_REF_DEFAULT on error.
+    """
+    if not checklist_rows:
+        logger.warning("  No checklist rows — using default cross-reference checks")
+        return _CROSS_REF_DEFAULT
+
+    # Format checklist as readable text for Sonnet
+    lines = []
+    current_category = None
+    for row in checklist_rows:
+        if row["category"] != current_category:
+            current_category = row["category"]
+            lines.append(f"\n### {current_category}")
+        note_text = f"\n   Note: {row['note']}" if row.get("note") else ""
+        lines.append(f"- {row['text']}{note_text}")
+    checklist_text = "\n".join(lines).strip()
+
+    prompt = _PROMPT_GENERATOR_USER.replace("{checklist_text}", checklist_text)
+
+    try:
+        logger.info("  Generating tailored analysis prompt from checklist (sonnet-4-6)...")
+        response = claude_with_retry(
+            client, logger,
+            model="claude-sonnet-4-6",
+            max_tokens=4096,
+            temperature=0,
+            system=_PROMPT_GENERATOR_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        generated = response.content[0].text.strip()
+        logger.info("  Tailored analysis prompt generated.")
+        return generated
+    except Exception as e:
+        logger.warning(f"  Prompt generation failed ({e}) — using default cross-reference checks")
+        return _CROSS_REF_DEFAULT
+
+
 def run_continuity_analysis(
     client,
     scraped_json_path: str,
@@ -199,6 +273,7 @@ def run_continuity_analysis(
     logger: logging.Logger,
     temperature: float = 0,
     reviewer_notes: str = None,
+    cross_ref_section: str = None,
 ) -> str:
     """
     Run the continuity analysis across all available sources.
@@ -258,9 +333,10 @@ def run_continuity_analysis(
         })
 
     # --- Continuity analysis prompt ---
+    cross_ref = cross_ref_section if cross_ref_section else _CROSS_REF_DEFAULT
     content_parts.append({
         "type": "text",
-        "text": _CONTINUITY_PROMPT,
+        "text": _CONTINUITY_PROMPT_TOP.replace("{cross_reference_checks}", cross_ref),
     })
 
     logger.info("  Running continuity analysis via Claude (opus-4-6)...")

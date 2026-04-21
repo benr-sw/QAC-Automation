@@ -60,9 +60,13 @@ def run_workflow(
             f"Week: {metadata['week_number']} — {metadata['week_title']}"
         )
 
+        logger.info("Reading checklist rows and notes...")
+        checklist_rows = sheets.read_checklist_rows(worksheet)
+        checklist_rows = sheets.load_notes_for_rows(worksheet, checklist_rows, logger)
+
         # ---- Portal: Login + Navigate ----
         logger.info("Launching browser...")
-        playwright_instance, browser, context, page = portal.launch_browser(headless=True)
+        playwright_instance, browser, context, page = portal.launch_browser(headless=False)
 
         logger.info("Logging into SWO portal...")
         portal.login(page, sw_password, logger)
@@ -154,6 +158,11 @@ def run_workflow(
             extracted_files[doc_type] = result  # None if not provided
 
         # ---- Phase 5: Continuity Analysis ----
+        logger.info("Generating tailored analysis prompt from checklist...")
+        cross_ref_section = continuity.generate_analysis_prompt(
+            claude_client, checklist_rows, logger
+        )
+
         logger.info("--- Phase 5: Continuity Analysis ---")
         continuity_path = os.path.join(run_dir, "continuity_analysis1.md")
         continuity.run_continuity_analysis(
@@ -164,12 +173,12 @@ def run_workflow(
             logger,
             temperature=0,
             reviewer_notes=reviewer_notes,
+            cross_ref_section=cross_ref_section,
         )
 
         # ---- Phase 6: Map issues to sheet and write ----
         logger.info("--- Phase 6: Writing issues to QAC sheet ---")
-        checklist_rows = sheets.read_checklist_rows(worksheet)
-        logger.info(f"  Read {len(checklist_rows)} checklist rows from sheet")
+        logger.info(f"  Using {len(checklist_rows)} checklist rows from sheet")
 
         final_qa_check_path = os.path.join(run_dir, "final_QA_check.md")
         mappings = qa_engine.map_issues_to_sheet(
